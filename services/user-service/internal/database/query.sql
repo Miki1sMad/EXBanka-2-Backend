@@ -103,6 +103,10 @@ SET email        = $2,
     is_active    = $9
 WHERE id = $1;
 
+-- name: UpdateUserActive :exec
+-- Updates only is_active for a user. Used by ToggleEmployeeActive for any employee/admin.
+UPDATE users SET is_active = $2 WHERE id = $1;
+
 -- name: UpdateEmployeeDetails :exec
 -- Updates position and department for an existing employee_details row.
 UPDATE employee_details

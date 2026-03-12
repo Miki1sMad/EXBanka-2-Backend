@@ -627,6 +627,20 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) error {
 	return err
 }
 
+const updateUserActive = `-- name: UpdateUserActive :exec
+UPDATE users SET is_active = $2 WHERE id = $1
+`
+
+type UpdateUserActiveParams struct {
+	ID       int64 `json:"id"`
+	IsActive bool  `json:"is_active"`
+}
+
+func (q *Queries) UpdateUserActive(ctx context.Context, arg UpdateUserActiveParams) error {
+	_, err := q.db.ExecContext(ctx, updateUserActive, arg.ID, arg.IsActive)
+	return err
+}
+
 const updateUserPassword = `-- name: UpdateUserPassword :exec
 
 UPDATE users SET password_hash = $1 WHERE email = $2

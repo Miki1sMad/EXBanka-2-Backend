@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: super_secret_password
       POSTGRES_DB: bank_db
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks:
@@ -34,6 +34,21 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    image: migrate/migrate
+    container_name: bank_migrate
+    volumes:
+      - ./services/user-service/internal/database/migrations:/migrations
+    command:
+      - "-path=/migrations"
+      - "-database=postgres://bank_admin:super_secret_password@db:5432/bank_db?sslmode=disable"
+      - "up"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - bank-net
+
   user-service:
     build:
       context: .
@@ -57,6 +72,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     networks:
       - bank-net
 
@@ -70,10 +87,12 @@ services:
     restart: on-failure
     environment:
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
-      - SMTP_HOST=sandbox.smtp.mailtrap.io
-      - SMTP_PORT=2525
+      - FROM_EMAIL=${FROM_EMAIL}
+      - FRONTEND_URL=${FRONTEND_URL}
     depends_on:
       rabbitmq:
         condition: service_healthy

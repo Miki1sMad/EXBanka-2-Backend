@@ -13,6 +13,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	pb "banka-backend/proto/user"
 	db "banka-backend/services/user-service/internal/database/sqlc"
@@ -89,6 +90,10 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 		return nil, status.Errorf(codes.InvalidArgument, "first_name is required")
 	case strings.TrimSpace(req.LastName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "last_name is required")
+	case req.BirthDate > 0 && req.BirthDate > time.Now().UnixMilli():
+		return nil, status.Errorf(codes.InvalidArgument, "birth date cannot be in the future")
+	case !isValidPhone(req.PhoneNumber):
+		return nil, status.Errorf(codes.InvalidArgument, "phone number may only contain digits and an optional leading +")
 	}
 
 	// ── 3. Open transaction ───────────────────────────────────────────────────
@@ -108,11 +113,17 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 	}
 
 	// ── 5. INSERT users ───────────────────────────────────────────────────────
+	// Resolve the user_type: default to EMPLOYEE when unspecified.
+	userType := userTypeToString(req.UserType)
+	if userType == "" {
+		userType = "EMPLOYEE"
+	}
+
 	newUser, err := qtx.CreateUser(ctx, db.CreateUserParams{
 		Email:        strings.TrimSpace(req.Email),
 		PasswordHash: "", // set during account activation (Issue 11)
 		SaltPassword: "", // set during account activation (Issue 11)
-		UserType:     "EMPLOYEE",
+		UserType:     userType,
 		FirstName:    strings.TrimSpace(req.FirstName),
 		LastName:     strings.TrimSpace(req.LastName),
 		BirthDate:    req.BirthDate,
@@ -135,10 +146,15 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 		username = strings.ToLower(req.FirstName + "." + req.LastName)
 	}
 
+	position := strings.TrimSpace(req.Position)
+	if userType == "ADMIN" {
+		position = "Administrator"
+	}
+
 	err = qtx.CreateEmployeeDetails(ctx, db.CreateEmployeeDetailsParams{
 		UserID:     newUser.ID,
 		Username:   username,
-		Position:   nullStrIf(req.Position, req.Position != ""),
+		Position:   nullStrIf(position, position != ""),
 		Department: nullStrIf(req.Department, req.Department != ""),
 	})
 	if err != nil {
@@ -149,15 +165,19 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 	}
 
 	// ── 7. Assign permissions ─────────────────────────────────────────────────
-	for _, code := range req.Permissions {
-		if strings.TrimSpace(code) == "" {
-			continue
-		}
-		if err := qtx.AssignUserPermission(ctx, db.AssignUserPermissionParams{
-			UserID:         newUser.ID,
-			PermissionCode: code,
-		}); err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to assign permission %q", code)
+	// ADMIN users derive all permissions from their user_type in the JWT; no
+	// DB permission rows are required or meaningful for them.
+	if userType != "ADMIN" {
+		for _, code := range req.Permissions {
+			if strings.TrimSpace(code) == "" {
+				continue
+			}
+			if err := qtx.AssignUserPermission(ctx, db.AssignUserPermissionParams{
+				UserID:         newUser.ID,
+				PermissionCode: code,
+			}); err != nil {
+				return nil, status.Errorf(codes.Internal, "failed to assign permission %q", code)
+			}
 		}
 	}
 
@@ -234,6 +254,10 @@ func (h *UserHandler) UpdateEmployee(ctx context.Context, req *pb.UpdateEmployee
 		return nil, status.Errorf(codes.InvalidArgument, "first_name is required")
 	case strings.TrimSpace(req.LastName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "last_name is required")
+	case req.BirthDate > 0 && req.BirthDate > time.Now().UnixMilli():
+		return nil, status.Errorf(codes.InvalidArgument, "birth date cannot be in the future")
+	case !isValidPhone(req.PhoneNumber):
+		return nil, status.Errorf(codes.InvalidArgument, "phone number may only contain digits and an optional leading +")
 	}
 
 	// ── 3. Pre-fetch target (not found + admin guard) ─────────────────────────
@@ -340,6 +364,57 @@ func (h *UserHandler) UpdateEmployee(ctx context.Context, req *pb.UpdateEmployee
 	}, nil
 }
 
+// ─── Toggle employee active (deactivate/activate any user including ADMIN) ───
+
+// ToggleEmployeeActive sets is_active for the given user (EMPLOYEE or ADMIN).
+// Authorization: ADMIN or MANAGE_USERS. Does not require fetching full profile,
+// so it works for ADMIN accounts that cannot be edited via UpdateEmployee.
+//
+// Mapped to: PATCH /employee/{id}/active (after make proto).
+func (h *UserHandler) ToggleEmployeeActive(ctx context.Context, req *pb.ToggleEmployeeActiveRequest) (*pb.ToggleEmployeeActiveResponse, error) {
+	claims, ok := interceptor.ClaimsFromContext(ctx)
+	if !ok {
+		return nil, status.Errorf(codes.PermissionDenied, "missing authentication claims")
+	}
+	isAdmin := claims.UserType == "ADMIN"
+	hasManageUsers := false
+	for _, p := range claims.Permissions {
+		if p == "MANAGE_USERS" {
+			hasManageUsers = true
+			break
+		}
+	}
+	if !isAdmin && !hasManageUsers {
+		return nil, status.Errorf(codes.PermissionDenied, "only admins or users with MANAGE_USERS permission can toggle active status")
+	}
+
+	if req.Id == 0 {
+		return nil, status.Errorf(codes.InvalidArgument, "id is required")
+	}
+
+	user, err := h.querier.GetUserByID(ctx, req.Id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to fetch user")
+	}
+
+	// Only allow toggling employees and admins, not clients
+	if user.UserType != "ADMIN" && user.UserType != "EMPLOYEE" {
+		return nil, status.Errorf(codes.PermissionDenied, "can only toggle active status for employees and administrators")
+	}
+
+	if err := h.querier.UpdateUserActive(ctx, db.UpdateUserActiveParams{
+		ID:       req.Id,
+		IsActive: req.IsActive,
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to update active status")
+	}
+
+	return &pb.ToggleEmployeeActiveResponse{IsActive: req.IsActive}, nil
+}
+
 // ─── Account activation / set password (Issue 11) ────────────────────────────
 
 // SetPassword lets an employee set their initial password by presenting the
@@ -403,9 +478,72 @@ func (h *UserHandler) SetPassword(ctx context.Context, req *pb.SetPasswordReques
 
 // ActivateAccount lets an employee set their password via the activation token
 // received by e-mail.
+//
+// Flow (no auth header required — the activation token IS the credential):
+//  1. Validate passwords match and meet minimum length.
+//  2. Verify the activation JWT — Unauthenticated if invalid or expired.
+//  3. Fetch the user by email — NotFound if the account no longer exists.
+//  4. Replay-attack guard: if password_hash is already set the token has been
+//     consumed; return FailedPrecondition so the link cannot be reused.
+//  5. Hash the new password with bcrypt.
+//  6. Persist the password_hash.
+//
 // Mapped to: POST /activate
-func (h *UserHandler) ActivateAccount(_ context.Context, _ *pb.ActivateAccountRequest) (*pb.ActivateAccountResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "not implemented yet")
+func (h *UserHandler) ActivateAccount(ctx context.Context, req *pb.ActivateAccountRequest) (*pb.ActivateAccountResponse, error) {
+	// ── 1. Password validation ────────────────────────────────────────────────
+	if req.NewPassword != req.ConfirmPassword {
+		return nil, status.Errorf(codes.InvalidArgument, "passwords do not match")
+	}
+	if len(req.NewPassword) < 8 {
+		return nil, status.Errorf(codes.InvalidArgument, "password must be at least 8 characters")
+	}
+
+	// ── 2. Verify activation token ────────────────────────────────────────────
+	email, err := utils.VerifyActivationToken(req.Token, h.activationSecret)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid or expired activation token")
+	}
+
+	// ── 3. Fetch user ─────────────────────────────────────────────────────────
+	user, err := h.querier.GetUserByEmail(ctx, email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to fetch user")
+	}
+
+	// ── 4. Replay-attack guard ────────────────────────────────────────────────
+	if user.PasswordHash != "" {
+		return nil, status.Errorf(codes.FailedPrecondition, "account is already activated; token is no longer valid")
+	}
+
+	// ── 5. Hash password ──────────────────────────────────────────────────────
+	hashed, err := utils.HashPassword(req.NewPassword)
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to hash password")
+	}
+
+	// ── 6. Persist ────────────────────────────────────────────────────────────
+	if err := h.querier.UpdateUserPassword(ctx, db.UpdateUserPasswordParams{
+		PasswordHash: hashed,
+		Email:        email,
+	}); err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to update password")
+	}
+
+	// ── 7. Send confirmation email ────────────────────────────────────────────
+	// Fire-and-forget: password is already committed, messaging failure must not
+	// surface as a gRPC error — the account is activated regardless.
+	if err := utils.PublishEmailEvent(h.rabbitMQURL, utils.EmailEvent{
+		Type:  "CONFIRMATION",
+		Email: email,
+		Token: "",
+	}); err != nil {
+		log.Printf("[activate-account] failed to publish confirmation event for %s: %v", email, err)
+	}
+
+	return &pb.ActivateAccountResponse{Message: "Account activated successfully."}, nil
 }
 
 // ─── Authentication ───────────────────────────────────────────────────────────
@@ -567,6 +705,9 @@ func (h *UserHandler) GetAllPermissions(ctx context.Context, _ *pb.GetAllPermiss
 	// ── 3. Map & return ───────────────────────────────────────────────────────
 	entries := make([]*pb.PermissionEntry, 0, len(rows))
 	for _, r := range rows {
+		if r.PermissionCode == "ADMIN_PERMISSION" {
+			continue
+		}
 		entries = append(entries, &pb.PermissionEntry{
 			Id:             int32(r.ID),
 			PermissionCode: r.PermissionCode,
@@ -796,6 +937,42 @@ func userTypeFromString(s string) pb.UserType {
 	default:
 		return pb.UserType_USER_TYPE_UNSPECIFIED
 	}
+}
+
+// userTypeToString maps the proto UserType enum to the DB VARCHAR value.
+// Returns "" for UNSPECIFIED so the caller can apply a default.
+func userTypeToString(t pb.UserType) string {
+	switch t {
+	case pb.UserType_USER_TYPE_ADMIN:
+		return "ADMIN"
+	case pb.UserType_USER_TYPE_EMPLOYEE:
+		return "EMPLOYEE"
+	case pb.UserType_USER_TYPE_CLIENT:
+		return "CLIENT"
+	default:
+		return ""
+	}
+}
+
+// isValidPhone reports whether s matches ^\+?[0-9]+$ (digits only, optional
+// leading +). An empty string is also accepted because phone is an optional field.
+func isValidPhone(s string) bool {
+	if s == "" {
+		return true
+	}
+	i := 0
+	if s[0] == '+' {
+		i = 1
+	}
+	if i >= len(s) {
+		return false // bare "+" is invalid
+	}
+	for _, c := range s[i:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // ─── Forgot / Reset password (Issue 12) ──────────────────────────────────────

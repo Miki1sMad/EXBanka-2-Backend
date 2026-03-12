@@ -75,6 +75,7 @@ type Querier interface {
 	// Updates the mutable base fields of an existing user row.
 	// Called inside a transaction by UpdateEmployee; never updates password_hash/salt.
 	UpdateUser(ctx context.Context, arg UpdateUserParams) error
+	UpdateUserActive(ctx context.Context, arg UpdateUserActiveParams) error
 	// ─── Account activation / set password (Issue 11) ───────────────────────────
 	// Sets the password hash for the user identified by email.
 	// Called by SetPassword after the activation token is verified.

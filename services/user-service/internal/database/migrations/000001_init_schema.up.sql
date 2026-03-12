@@ -114,10 +114,30 @@ CREATE INDEX idx_verification_tokens_token ON verification_tokens (token);
 
 INSERT INTO permissions (permission_code) VALUES
     ('ADMIN_PERMISSION'),   -- grants full administrative access
-    ('MANAGE_USERS'),       -- create / edit / deactivate employees
-    ('VIEW_EMPLOYEES'),     -- read-only view of employee list
-    ('CONTRACT_SIGNING'),   -- sign banking contracts
+    ('CONTRACT_SIGNING'),   -- sign banking contracts and agreements
+    ('NEW_INSURANCE'),      -- create new insurance policies
     ('STOCK_TRADING'),      -- trade securities on behalf of clients
+    ('VIEW_STOCKS'),        -- read-only view of stocks and securities
     ('VIEW_ACCOUNTS'),      -- view client account details
     ('MANAGE_ACCOUNTS')     -- open / close / modify client accounts
 ON CONFLICT (permission_code) DO NOTHING;
+
+-- =============================================================================
+-- SEED DATA — initial admin user
+-- password: Admin123 (bcrypt cost 12)
+-- =============================================================================
+
+INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, is_active)
+VALUES ('admin@raf.rs', '$2a$12$AcicRLhfUC1gQ2CWY.7t0.enY/PeLQU3.whwoBNr3CwSCncnbO5Qq', '', 'ADMIN', 'Admin', 'Admin', 0, TRUE)
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO employee_details (user_id, username, position, department)
+SELECT id, 'admin', 'Administrator', 'IT'
+FROM users WHERE email = 'admin@raf.rs'
+ON CONFLICT (user_id) DO NOTHING;
+
+INSERT INTO user_permissions (user_id, permission_id)
+SELECT u.id, p.id
+FROM users u, permissions p
+WHERE u.email = 'admin@raf.rs' AND p.permission_code = 'ADMIN_PERMISSION'
+ON CONFLICT DO NOTHING;

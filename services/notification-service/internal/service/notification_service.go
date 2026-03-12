@@ -5,13 +5,16 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
-	"net/smtp"
+	"log"
+	"strings"
 
 	"banka-backend/services/notification-service/internal/config"
 	"banka-backend/services/notification-service/internal/domain"
+	"banka-backend/services/notification-service/internal/smtp"
 )
 
-// EmailService sends transactional emails via SMTP.
+// EmailService sends transactional emails via Gmail SMTP (or other SMTP).
+// Recipient is always taken from the event (e.g. from frontend/request payload).
 type EmailService struct {
 	cfg *config.Config
 }
@@ -22,9 +25,15 @@ func NewEmailService(cfg *config.Config) *EmailService {
 }
 
 // SendEmail dispatches an HTML email based on the event type.
+// event.Email is the recipient (dynamic from frontend form / request / RabbitMQ payload).
+// Links: activation = FRONTEND_URL/activate?token=...; reset = FRONTEND_URL/reset-password?token=...
 func (s *EmailService) SendEmail(event domain.EmailEvent) error {
-	var subject, tmplStr string
+	recipient := strings.TrimSpace(event.Email)
+	if recipient == "" {
+		return fmt.Errorf("recipient email is required")
+	}
 
+	var subject, tmplStr string
 	switch event.Type {
 	case "ACTIVATION":
 		subject = "Activate Your EXBanka Account"
@@ -55,17 +64,10 @@ func (s *EmailService) SendEmail(event domain.EmailEvent) error {
 		return fmt.Errorf("template execute: %w", err)
 	}
 
-	msg := fmt.Sprintf(
-		"From: %s\r\nTo: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=\"UTF-8\"\r\n\r\n%s",
-		s.cfg.FromEmail, event.Email, subject, body.String(),
-	)
-
-	addr := fmt.Sprintf("%s:%s", s.cfg.SMTPHost, s.cfg.SMTPPort)
-
-	var auth smtp.Auth
-	if s.cfg.SMTPUser != "" {
-		auth = smtp.PlainAuth("", s.cfg.SMTPUser, s.cfg.SMTPPass, s.cfg.SMTPHost)
+	if err := smtp.Send(s.cfg, recipient, subject, body.String()); err != nil {
+		log.Printf("[notification] send email failed type=%s recipient=%s: %v", event.Type, recipient, err)
+		return err
 	}
-
-	return smtp.SendMail(addr, auth, s.cfg.FromEmail, []string{event.Email}, []byte(msg))
+	log.Printf("[notification] email sent type=%s to %s", event.Type, recipient)
+	return nil
 }

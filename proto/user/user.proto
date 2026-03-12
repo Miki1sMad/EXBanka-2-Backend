@@ -132,6 +132,10 @@ message CreateEmployeeRequest {
 
   // Initial set of permission codes to assign via user_permissions.
   repeated string permissions = 12;
+
+  // Type of user being created. Defaults to USER_TYPE_EMPLOYEE if unspecified.
+  // Use USER_TYPE_ADMIN to create an administrator account.
+  UserType user_type = 13;
 }
 
 message CreateEmployeeResponse {
@@ -161,6 +165,19 @@ message UpdateEmployeeRequest {
 
 message UpdateEmployeeResponse {
   EmployeeProfile employee = 1; // fresh profile read back after commit
+}
+
+// ─── ToggleEmployeeActive ─────────────────────────────────────────────────────
+// Admin or MANAGE_USERS. Toggles is_active for any user (including ADMIN).
+// Used so admins can be deactivated without going through the full-edit flow.
+
+message ToggleEmployeeActiveRequest {
+  int64 id        = 1; // user id
+  bool is_active  = 2; // new active state
+}
+
+message ToggleEmployeeActiveResponse {
+  bool is_active = 1; // new state after update
 }
 
 // ─── SetPassword ──────────────────────────────────────────────────────────────
@@ -306,6 +323,14 @@ service UserService {
   rpc UpdateEmployee(UpdateEmployeeRequest) returns (UpdateEmployeeResponse) {
     option (google.api.http) = {
       put: "/employee/{id}"
+      body: "*"
+    };
+  }
+
+  // ToggleEmployeeActive — Admin or MANAGE_USERS. Sets is_active for any user (including ADMIN).
+  rpc ToggleEmployeeActive(ToggleEmployeeActiveRequest) returns (ToggleEmployeeActiveResponse) {
+    option (google.api.http) = {
+      patch: "/employee/{id}/active"
       body: "*"
     };
   }
