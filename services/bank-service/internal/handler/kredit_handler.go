@@ -149,13 +149,15 @@ func (h *BankHandler) ApplyForCredit(
 	}
 
 	// Pošalji email potvrdu da je zahtev primljen (fire-and-forget).
-	if email, mailErr := h.userClient.GetMyEmail(ctx); mailErr == nil && email != "" {
-		if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
-			Type:  worker.KreditPodnetType,
-			Email: email,
-			Token: "",
-		}); pubErr != nil {
-			log.Printf("[apply-credit] UPOZORENJE: zahtev kreiran (id=%d) ali KREDIT_PODNET email nije poslat: %v", zahtev.ID, pubErr)
+	if h.userClient != nil {
+		if email, mailErr := h.userClient.GetMyEmail(ctx); mailErr == nil && email != "" {
+			if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
+				Type:  worker.KreditPodnetType,
+				Email: email,
+				Token: "",
+			}); pubErr != nil {
+				log.Printf("[apply-credit] UPOZORENJE: zahtev kreiran (id=%d) ali KREDIT_PODNET email nije poslat: %v", zahtev.ID, pubErr)
+			}
 		}
 	}
 
@@ -283,7 +285,7 @@ func (h *BankHandler) ApproveCredit(
 	if installErr != nil {
 		log.Printf("[approve-credit] UPOZORENJE: kredit odobren (id=%d) ali naplata prve rate nije uspela: %v", kredit.ID, installErr)
 	}
-	if insufficientFunds {
+	if insufficientFunds && h.userClient != nil {
 		// Nema dovoljno sredstava — pošalji upozorenje klijentu emailom.
 		if email, mailErr := h.userClient.GetClientEmail(ctx, kredit.VlasnikID); mailErr == nil && email != "" {
 			if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{

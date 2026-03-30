@@ -418,3 +418,96 @@ func TestToRSD_UnknownCurrency(t *testing.T) {
 	result := toRSD(500, "UNKNOWN_CCY")
 	assert.Equal(t, 500.0, result)
 }
+
+// ─── ProcessFirstInstallment ──────────────────────────────────────────────────
+
+func TestProcessFirstInstallment_NoInstallments(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(1)).Return([]domain.Rata{}, nil)
+
+	insuf, retry, err := svc.ProcessFirstInstallment(context.Background(), 1)
+	require.NoError(t, err)
+	assert.False(t, insuf)
+	assert.True(t, retry.IsZero())
+}
+
+func TestProcessFirstInstallment_RepoError(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(2)).Return(nil, errors.New("db error"))
+
+	_, _, err := svc.ProcessFirstInstallment(context.Background(), 2)
+	assert.Error(t, err)
+}
+
+func TestProcessFirstInstallment_PaymentSuccess(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	rata := domain.Rata{ID: 10, IznosRate: 5000, Valuta: "RSD"}
+	kredit := &domain.Kredit{ID: 3, BrojRacuna: "111222333444555666"}
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(3)).Return([]domain.Rata{rata}, nil)
+	repo.On("GetKreditByID", mock.Anything, int64(3)).Return(kredit, nil)
+	repo.On("ProcessInstallmentPayment", mock.Anything, mock.MatchedBy(func(inp domain.ProcessInstallmentInput) bool {
+		return inp.RataID == 10 && inp.KreditID == 3
+	})).Return(nil)
+
+	insuf, retry, err := svc.ProcessFirstInstallment(context.Background(), 3)
+	require.NoError(t, err)
+	assert.False(t, insuf)
+	assert.True(t, retry.IsZero())
+}
+
+func TestProcessFirstInstallment_InsufficientFunds(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	rata := domain.Rata{ID: 11, IznosRate: 9000, Valuta: "RSD"}
+	kredit := &domain.Kredit{ID: 4, BrojRacuna: "111222333444555777"}
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(4)).Return([]domain.Rata{rata}, nil)
+	repo.On("GetKreditByID", mock.Anything, int64(4)).Return(kredit, nil)
+	repo.On("ProcessInstallmentPayment", mock.Anything, mock.Anything).Return(domain.ErrInsufficientFunds)
+	repo.On("MarkInstallmentFailed", mock.Anything, int64(11), mock.Anything).Return(nil)
+
+	insuf, retry, err := svc.ProcessFirstInstallment(context.Background(), 4)
+	require.NoError(t, err)
+	assert.True(t, insuf)
+	assert.False(t, retry.IsZero())
+}
+
+func TestProcessFirstInstallment_AlreadyPaid(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	rata := domain.Rata{ID: 12, IznosRate: 3000, Valuta: "RSD"}
+	kredit := &domain.Kredit{ID: 5, BrojRacuna: "111222333444555888"}
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(5)).Return([]domain.Rata{rata}, nil)
+	repo.On("GetKreditByID", mock.Anything, int64(5)).Return(kredit, nil)
+	repo.On("ProcessInstallmentPayment", mock.Anything, mock.Anything).Return(domain.ErrRataVecPlacena)
+
+	insuf, retry, err := svc.ProcessFirstInstallment(context.Background(), 5)
+	require.NoError(t, err)
+	assert.False(t, insuf)
+	assert.True(t, retry.IsZero())
+}
+
+func TestProcessFirstInstallment_UnexpectedError(t *testing.T) {
+	repo := mocks.NewMockKreditRepository(t)
+	svc := newKreditService(repo)
+
+	rata := domain.Rata{ID: 13, IznosRate: 1000, Valuta: "RSD"}
+	kredit := &domain.Kredit{ID: 6, BrojRacuna: "111222333444555999"}
+
+	repo.On("GetInstallmentsByKredit", mock.Anything, int64(6)).Return([]domain.Rata{rata}, nil)
+	repo.On("GetKreditByID", mock.Anything, int64(6)).Return(kredit, nil)
+	repo.On("ProcessInstallmentPayment", mock.Anything, mock.Anything).Return(errors.New("unexpected db error"))
+
+	_, _, err := svc.ProcessFirstInstallment(context.Background(), 6)
+	assert.Error(t, err)
+}

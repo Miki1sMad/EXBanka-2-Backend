@@ -141,14 +141,21 @@ func (h *BankHandler) CreatePaymentIntent(ctx context.Context, req *pb.CreatePay
 		return nil, mapPaymentError(err)
 	}
 
-	return &pb.CreatePaymentIntentResponse{
+	resp := &pb.CreatePaymentIntentResponse{
 		IntentId:   intent.ID,
 		ActionId:   actionID,
 		BrojNaloga: intent.BrojNaloga,
 		Status:     intent.Status,
 		Valuta:     intent.ValutaOznaka,
 		Iznos:      intent.Iznos,
-	}, nil
+		Provizija:  intent.Provizija,
+		Kurs:       intent.Kurs,
+		ValutaPrimaoca: intent.ValutaPrimaoca,
+	}
+	if intent.KrajnjiIznos != nil {
+		resp.KrajnjiIznos = *intent.KrajnjiIznos
+	}
+	return resp, nil
 }
 
 // CreateTransferIntent kreira nalog prenosa između računa istog klijenta.
@@ -173,14 +180,21 @@ func (h *BankHandler) CreateTransferIntent(ctx context.Context, req *pb.CreateTr
 		return nil, mapPaymentError(err)
 	}
 
-	return &pb.CreatePaymentIntentResponse{
-		IntentId:   intent.ID,
-		ActionId:   actionID,
-		BrojNaloga: intent.BrojNaloga,
-		Status:     intent.Status,
-		Valuta:     intent.ValutaOznaka,
-		Iznos:      intent.Iznos,
-	}, nil
+	resp := &pb.CreatePaymentIntentResponse{
+		IntentId:       intent.ID,
+		ActionId:       actionID,
+		BrojNaloga:     intent.BrojNaloga,
+		Status:         intent.Status,
+		Valuta:         intent.ValutaOznaka,
+		Iznos:          intent.Iznos,
+		Provizija:      intent.Provizija,
+		Kurs:           intent.Kurs,
+		ValutaPrimaoca: intent.ValutaPrimaoca,
+	}
+	if intent.KrajnjiIznos != nil {
+		resp.KrajnjiIznos = *intent.KrajnjiIznos
+	}
+	return resp, nil
 }
 
 // VerifyAndExecutePayment proverava verifikacioni kod i izvršava plaćanje.
@@ -310,6 +324,8 @@ func intentToPb(i *domain.PaymentIntent) *pb.PaymentIntentItem {
 		NazivPrimaoca:      i.NazivPrimaoca,
 		Iznos:              i.Iznos,
 		Provizija:          i.Provizija,
+		Kurs:               i.Kurs,
+		ValutaPrimaoca:     i.ValutaPrimaoca,
 		Valuta:             i.ValutaOznaka,
 		SifraPlacanja:      i.SifraPlacanja,
 		PozivNaBroj:        i.PozivNaBroj,

@@ -52,6 +52,8 @@ type PaymentIntent struct {
 	Iznos               float64
 	KrajnjiIznos        *float64
 	Provizija           float64
+	Kurs                float64
+	ValutaPrimaoca      string
 	SifraPlacanja       string
 	PozivNaBroj         string
 	SvrhaPlacanja       string

@@ -251,6 +251,10 @@ message CreatePaymentIntentResponse {
   string status          = 4;  // "U_OBRADI"
   string valuta          = 5;
   double iznos           = 6;
+  double krajnji_iznos   = 7;  // iznos koji primalac dobija (u valuti primaoca); 0 = ista valuta
+  double provizija       = 8;  // provizija u valuti primaoca; 0 = ista valuta
+  double kurs            = 9;  // efektivni kurs konverzije; 0 = ista valuta
+  string valuta_primaoca = 10; // valuta primaoca; prazno = ista valuta kao platioc
 }
 
 // VerifyPaymentRequest — verifikacija koda i izvršenje naloga.
@@ -280,6 +284,8 @@ message PaymentIntentItem {
   string executed_at          = 17;  // ISO 8601, prazan ako nije izvršen
   string failed_reason        = 18;
   int64  intent_id            = 19;  // alias za id, za frontend kompatibilnost
+  double kurs                 = 20;  // efektivni kurs konverzije; 0 = ista valuta
+  string valuta_primaoca      = 21;  // valuta primaoca; prazno = ista valuta
 }
 
 message GetPaymentHistoryRequest {

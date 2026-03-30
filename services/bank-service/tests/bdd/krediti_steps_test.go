@@ -183,6 +183,8 @@ func (s *scenarioCtx) postojiZahtevZaKreditOdStraneKlijenta() error {
 	}
 	s.kreditSvcMock.On("ApproveCredit", mock.Anything, s.zahtevID).
 		Return(kredit, nil)
+	s.kreditSvcMock.On("ProcessFirstInstallment", mock.Anything, s.activeKreditID).
+		Return(false, time.Time{}, nil)
 	return nil
 }
 

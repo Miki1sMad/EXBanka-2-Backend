@@ -5,6 +5,7 @@ package mocks
 import (
 	domain "banka-backend/services/bank-service/internal/domain"
 	context "context"
+	time "time"
 
 	mock "github.com/stretchr/testify/mock"
 )
@@ -219,6 +220,38 @@ func (_m *MockKreditService) RejectCredit(ctx context.Context, zahtevID int64) e
 	}
 
 	return r0
+}
+
+// ProcessFirstInstallment provides a mock function with given fields: ctx, kreditID
+func (_m *MockKreditService) ProcessFirstInstallment(ctx context.Context, kreditID int64) (bool, time.Time, error) {
+	ret := _m.Called(ctx, kreditID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ProcessFirstInstallment")
+	}
+
+	var r0 bool
+	var r1 time.Time
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64) (bool, time.Time, error)); ok {
+		return rf(ctx, kreditID)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64) bool); ok {
+		r0 = rf(ctx, kreditID)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+	if rf, ok := ret.Get(1).(func(context.Context, int64) time.Time); ok {
+		r1 = rf(ctx, kreditID)
+	} else {
+		r1 = ret.Get(1).(time.Time)
+	}
+	if rf, ok := ret.Get(2).(func(context.Context, int64) error); ok {
+		r2 = rf(ctx, kreditID)
+	} else {
+		r2 = ret.Error(2)
+	}
+	return r0, r1, r2
 }
 
 // NewMockKreditService creates a new instance of MockKreditService. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.

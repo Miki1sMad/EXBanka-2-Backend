@@ -34,7 +34,11 @@ tidy:
 
 # Run all unit tests
 test:
-	go test ./services/... -v -count=1
+	$(HOME)/go/bin/gotestsum --format testdox -- ./services/... -count=1
+
+# Swagger UI lokalno (http://localhost:8099)
+swagger:
+	python3 scripts/swagger_server.py
 
 # Run tests with coverage (filtered) and generate HTML report
 coverage:

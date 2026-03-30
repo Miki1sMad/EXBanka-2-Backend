@@ -41,6 +41,8 @@ type paymentIntentModel struct {
 	Iznos              float64    `gorm:"column:iznos"`
 	KrajnjiIznos       *float64   `gorm:"column:krajnji_iznos"`
 	Provizija          float64    `gorm:"column:provizija"`
+	Kurs               float64    `gorm:"column:kurs"`
+	ValutaPrimaoca     string     `gorm:"column:valuta_primaoca"`
 	Valuta             string     `gorm:"column:valuta"`
 	SifraPlacanja      string     `gorm:"column:sifra_placanja"`
 	PozivNaBroj        string     `gorm:"column:poziv_na_broj"`
@@ -268,13 +270,19 @@ func (r *paymentRepository) CreateIntent(ctx context.Context, input domain.Creat
 		recipientID = &id
 	}
 
-	// Izračunaj krajnji iznos za cross-currency interne prenose.
+	// Izračunaj krajnji iznos i proviziju za cross-currency interne prenose.
 	var krajnjiIznosPreview *float64
+	var intentProvizija float64
+	var intentKurs float64
+	var intentValutaPrimaoca string
 	if recipientAccount.ID != 0 &&
 		recipientAccount.ValutaOznaka != "" &&
 		payerAccount.ValutaOznaka != recipientAccount.ValutaOznaka {
-		converted := convertPaymentAmount(payerAccount.ValutaOznaka, recipientAccount.ValutaOznaka, input.Iznos)
-		krajnjiIznosPreview = &converted
+		netAmount, k, prov := convertPaymentAmountWithFee(payerAccount.ValutaOznaka, recipientAccount.ValutaOznaka, input.Iznos)
+		krajnjiIznosPreview = &netAmount
+		intentProvizija = prov
+		intentKurs = k
+		intentValutaPrimaoca = recipientAccount.ValutaOznaka
 	}
 
 	var actionID int64
@@ -307,7 +315,9 @@ func (r *paymentRepository) CreateIntent(ctx context.Context, input domain.Creat
 			NazivPrimaoca:      input.NazivPrimaoca,
 			Iznos:              input.Iznos,
 			KrajnjiIznos:       krajnjiIznosPreview,
-			Provizija:          0,
+			Provizija:          intentProvizija,
+			Kurs:               intentKurs,
+			ValutaPrimaoca:     intentValutaPrimaoca,
 			Valuta:             payerAccount.ValutaOznaka,
 			SifraPlacanja:      input.SifraPlacanja,
 			PozivNaBroj:        input.PozivNaBroj,
@@ -378,11 +388,12 @@ func (r *paymentRepository) CreateTransferIntent(ctx context.Context, input doma
 		return nil, 0, domain.ErrAccountNotOwned
 	}
 
-	// Dohvati račun primaoca — mora biti isti vlasnik.
+	// Dohvati račun primaoca — mora biti isti vlasnik (uključuje i valutu za proviziju).
 	var recipientAccount racunForPayment
 	err = r.db.WithContext(ctx).Raw(`
-		SELECT ra.id, ra.broj_racuna, ra.id_vlasnika, ra.status
+		SELECT ra.id, ra.broj_racuna, ra.id_vlasnika, ra.status, v.oznaka AS valuta_oznaka
 		FROM core_banking.racun ra
+		JOIN core_banking.valuta v ON v.id = ra.id_valute
 		WHERE ra.id = ? AND ra.id_vlasnika = ? AND ra.status = 'AKTIVAN'
 		LIMIT 1
 	`, input.RacunPrimaocaID, input.InitiatedByUserID).Scan(&recipientAccount).Error
@@ -426,13 +437,28 @@ func (r *paymentRepository) CreateTransferIntent(ctx context.Context, input doma
 		}
 		actionID = action.ID
 
-		// Za konverziju valuta, krajnji_iznos čuva iznos koji se upisuje primaocu.
+		// Za konverziju valuta, krajnji_iznos i provizija se računaju automatski ako ConvertedIznos nije prosleđen.
 		var krajnjiIznos *float64
+		var transferProvizija float64
+		var transferKurs float64
+		var transferValutaPrimaoca string
 		if input.ConvertedIznos > 0 && input.ConvertedIznos != input.Iznos {
+			// Menjačnica je već izračunala neto iznos; izvuci proviziju.
 			v := input.ConvertedIznos
 			krajnjiIznos = &v
+			// Izračunaj bruto konverziju da bi dobili proviziju i kurs.
+			_, k, prov := convertPaymentAmountWithFee(payerAccount.ValutaOznaka, recipientAccount.ValutaOznaka, input.Iznos)
+			transferProvizija = prov
+			transferKurs = k
+			transferValutaPrimaoca = recipientAccount.ValutaOznaka
+		} else if recipientAccount.ValutaOznaka != "" && payerAccount.ValutaOznaka != recipientAccount.ValutaOznaka {
+			// Direktan prenos između računa različitih valuta — izračunaj konverziju.
+			netAmount, k, prov := convertPaymentAmountWithFee(payerAccount.ValutaOznaka, recipientAccount.ValutaOznaka, input.Iznos)
+			krajnjiIznos = &netAmount
+			transferProvizija = prov
+			transferKurs = k
+			transferValutaPrimaoca = recipientAccount.ValutaOznaka
 		}
-
 
 		intent := &paymentIntentModel{
 			IdempotencyKey:     input.IdempotencyKey,
@@ -445,7 +471,9 @@ func (r *paymentRepository) CreateTransferIntent(ctx context.Context, input doma
 			NazivPrimaoca:      "Interni prenos",
 			Iznos:              input.Iznos,
 			KrajnjiIznos:       krajnjiIznos,
-			Provizija:          0,
+			Provizija:          transferProvizija,
+			Kurs:               transferKurs,
+			ValutaPrimaoca:     transferValutaPrimaoca,
 			Valuta:             payerAccount.ValutaOznaka,
 			SvrhaPlacanja:      input.SvrhaPlacanja,
 			Status:             "U_OBRADI",
@@ -563,10 +591,67 @@ func (r *paymentRepository) VerifyAndExecute(ctx context.Context, input domain.V
 			return nil
 		}
 
-		// 7. Dohvati i zaključaj račune u determinističkom redosledu (sprečava deadlock).
+		// 7. Odredi da li je cross-currency (različite valute) interni prenos.
+		// Za cross-currency: novac prolazi preko trezorskih računa banke.
+		isCrossCurrency := intent.RacunPrimaocaID != nil &&
+			intent.KrajnjiIznos != nil &&
+			*intent.KrajnjiIznos > 0 &&
+			*intent.KrajnjiIznos != intent.Iznos
+
+		// Za cross-currency: pronađi trezorske račune banke (pre lockovanja).
+		var bankPayerTreasuryID, bankRecipientTreasuryID int64
+		if isCrossCurrency {
+			type bankTreasuryRow struct {
+				ID           int64  `gorm:"column:id"`
+				ValutaOznaka string `gorm:"column:valuta_oznaka"`
+			}
+			// Dohvati valutu računa primaoca.
+			var recCurrency struct {
+				ValutaOznaka string `gorm:"column:valuta_oznaka"`
+			}
+			if err := tx.Raw(`
+				SELECT v.oznaka AS valuta_oznaka
+				FROM core_banking.racun ra
+				JOIN core_banking.valuta v ON v.id = ra.id_valute
+				WHERE ra.id = ?
+			`, *intent.RacunPrimaocaID).Scan(&recCurrency).Error; err != nil {
+				return fmt.Errorf("lookup valute primaoca: %w", err)
+			}
+			// Pronađi trezorske račune banke za obe valute (vlasnik_id = 2 = trezor@exbanka.rs).
+			var bankRows []bankTreasuryRow
+			if err := tx.Raw(`
+				SELECT ra.id, v.oznaka AS valuta_oznaka
+				FROM core_banking.racun ra
+				JOIN core_banking.valuta v ON v.id = ra.id_valute
+				WHERE ra.id_vlasnika = 2 AND ra.status = 'AKTIVAN'
+				  AND v.oznaka IN ?
+			`, []string{intent.Valuta, recCurrency.ValutaOznaka}).Scan(&bankRows).Error; err != nil {
+				return fmt.Errorf("lookup trezorskih računa: %w", err)
+			}
+			for _, br := range bankRows {
+				if br.ValutaOznaka == intent.Valuta {
+					bankPayerTreasuryID = br.ID
+				}
+				if br.ValutaOznaka == recCurrency.ValutaOznaka {
+					bankRecipientTreasuryID = br.ID
+				}
+			}
+			if bankPayerTreasuryID == 0 || bankRecipientTreasuryID == 0 {
+				return fmt.Errorf("trezorski računi banke za valute %s/%s nisu pronađeni — primenite migraciju 000010", intent.Valuta, recCurrency.ValutaOznaka)
+			}
+		}
+
+		// 8. Dohvati i zaključaj račune u determinističkom redosledu (sprečava deadlock).
+		// Za cross-currency uključujemo i oba trezorska računa banke.
 		accountIDs := []int64{intent.RacunPlatioceID}
 		if intent.RacunPrimaocaID != nil {
 			accountIDs = append(accountIDs, *intent.RacunPrimaocaID)
+		}
+		if bankPayerTreasuryID != 0 {
+			accountIDs = append(accountIDs, bankPayerTreasuryID)
+		}
+		if bankRecipientTreasuryID != 0 && bankRecipientTreasuryID != bankPayerTreasuryID {
+			accountIDs = append(accountIDs, bankRecipientTreasuryID)
 		}
 		sort.Slice(accountIDs, func(i, j int) bool { return accountIDs[i] < accountIDs[j] })
 
@@ -602,7 +687,7 @@ func (r *paymentRepository) VerifyAndExecute(ctx context.Context, input domain.V
 
 		payer := accounts[payerIdx]
 
-		// 8. Validacija stanja i limita unutar iste transakcije (nakon lockovanja).
+		// 9. Validacija stanja i limita unutar iste transakcije (nakon lockovanja).
 		if payer.Status != "AKTIVAN" {
 			return domain.ErrAccountNotOwned
 		}
@@ -619,7 +704,7 @@ func (r *paymentRepository) VerifyAndExecute(ctx context.Context, input domain.V
 
 		now := time.Now().UTC()
 
-		// 9. Skini novac sa računa platioca + ažuriraj potrošnju.
+		// 10. Skini novac sa računa platioca + ažuriraj potrošnju.
 		if err := tx.Exec(`
 			UPDATE core_banking.racun
 			SET stanje_racuna     = stanje_racuna - ?,
@@ -630,7 +715,7 @@ func (r *paymentRepository) VerifyAndExecute(ctx context.Context, input domain.V
 			return fmt.Errorf("debit platioca: %w", err)
 		}
 
-		// 10. Upiši transakciju ISPLATA za platioca.
+		// 11. Upiši transakciju ISPLATA za platioca.
 		txIzlaz := &transakcijaModel{
 			RacunID:          intent.RacunPlatioceID,
 			TipTransakcije:   "ISPLATA",
@@ -643,12 +728,54 @@ func (r *paymentRepository) VerifyAndExecute(ctx context.Context, input domain.V
 			return fmt.Errorf("insert transakcija isplata: %w", err)
 		}
 
-		// 11. Ako je interni prenos, uplati na račun primaoca.
-		// Za konverziju valuta, krajnji_iznos sadrži iznos koji se upisuje primaocu.
+		// 12. Uplati na račun primaoca (za interna plaćanja).
+		// Za cross-currency: novac prolazi preko trezorskih računa banke.
+		// Za iste valute: direktan prenos.
 		creditAmount := intent.Iznos
 		if intent.KrajnjiIznos != nil && *intent.KrajnjiIznos > 0 && *intent.KrajnjiIznos != intent.Iznos {
 			creditAmount = *intent.KrajnjiIznos
 		}
+
+		if isCrossCurrency {
+			// 12a. Banka prima valutu platioca na svoj trezorski račun + transakcija UPLATA.
+			if err := tx.Exec(`
+				UPDATE core_banking.racun
+				SET stanje_racuna = stanje_racuna + ?
+				WHERE id = ? AND status = 'AKTIVAN'
+			`, intent.Iznos, bankPayerTreasuryID).Error; err != nil {
+				return fmt.Errorf("credit banka trezor (platioc valuta): %w", err)
+			}
+			if err := tx.Create(&transakcijaModel{
+				RacunID:          bankPayerTreasuryID,
+				TipTransakcije:   "UPLATA",
+				Iznos:            intent.Iznos,
+				Opis:             fmt.Sprintf("Konverzija %s — uplata od klijenta", intent.BrojNaloga),
+				VremeIzvrsavanja: now,
+				Status:           "IZVRSEN",
+			}).Error; err != nil {
+				return fmt.Errorf("insert transakcija trezor uplata: %w", err)
+			}
+
+			// 12b. Banka šalje valutu primaoca sa svog trezorskog računa + transakcija ISPLATA.
+			if err := tx.Exec(`
+				UPDATE core_banking.racun
+				SET stanje_racuna = stanje_racuna - ?
+				WHERE id = ? AND status = 'AKTIVAN'
+			`, creditAmount, bankRecipientTreasuryID).Error; err != nil {
+				return fmt.Errorf("debit banka trezor (primalac valuta): %w", err)
+			}
+			if err := tx.Create(&transakcijaModel{
+				RacunID:          bankRecipientTreasuryID,
+				TipTransakcije:   "ISPLATA",
+				Iznos:            creditAmount,
+				Opis:             fmt.Sprintf("Konverzija %s — isplata klijentu", intent.BrojNaloga),
+				VremeIzvrsavanja: now,
+				Status:           "IZVRSEN",
+			}).Error; err != nil {
+				return fmt.Errorf("insert transakcija trezor isplata: %w", err)
+			}
+		}
+
 		if intent.RacunPrimaocaID != nil && recipientIdx >= 0 {
 			if err := tx.Exec(`
 				UPDATE core_banking.racun
@@ -781,6 +908,8 @@ func intentToDomain(m paymentIntentModel) *domain.PaymentIntent {
 		Iznos:              m.Iznos,
 		KrajnjiIznos:       m.KrajnjiIznos,
 		Provizija:          m.Provizija,
+		Kurs:               m.Kurs,
+		ValutaPrimaoca:     m.ValutaPrimaoca,
 		ValutaOznaka:       m.Valuta,
 		SifraPlacanja:      m.SifraPlacanja,
 		PozivNaBroj:        m.PozivNaBroj,
@@ -813,32 +942,79 @@ var paymentFallbackRates = map[string]float64{
 	"AUD":  68.50,
 }
 
-// convertPaymentAmount konvertuje iznos iz fromCurrency u toCurrency koristeći srednje kurseve.
-func convertPaymentAmount(fromCurrency, toCurrency string, amount float64) float64 {
+// paymentProvizijaRate je stopa provizije za cross-currency plaćanja (0.5%).
+const paymentProvizijaRate = 0.005
+
+// paymentSpreadRate je polu-raspon za kupovni/prodajni kurs (0.5%).
+const paymentSpreadRate = 0.005
+
+// convertPaymentAmountWithFee konvertuje iznos uz spread i proviziju.
+// Vraća (netIznos, kurs, provizija) u ciljnoj valuti.
+// kurs je efektivni kurs: koliko jedinica toCurrency dobijamo za 1 jedinicu fromCurrency.
+// Iste valute → (amount, 1, 0), nema provizije.
+func convertPaymentAmountWithFee(fromCurrency, toCurrency string, amount float64) (net float64, kurs float64, provizija float64) {
 	if fromCurrency == toCurrency {
-		return amount
+		return amount, 1, 0
 	}
-	if fromCurrency == "RSD" {
-		// RSD → strani: amount / kurs_strane
-		toRate, ok := paymentFallbackRates[toCurrency]
-		if !ok || toRate == 0 {
-			return amount
-		}
-		return amount / toRate
-	}
-	if toCurrency == "RSD" {
-		// strani → RSD: amount * kurs_od
-		fromRate, ok := paymentFallbackRates[fromCurrency]
+
+	kupovni := func(code string) (float64, bool) {
+		mid, ok := paymentFallbackRates[code]
 		if !ok {
-			return amount
+			return 0, false
 		}
-		return amount * fromRate
+		return mid * (1 - paymentSpreadRate), true
 	}
-	// Kros-valutna konverzija: fromCurrency → RSD → toCurrency
-	fromRate, fromOK := paymentFallbackRates[fromCurrency]
-	toRate, toOK := paymentFallbackRates[toCurrency]
-	if !fromOK || !toOK || toRate == 0 {
-		return amount
+	prodajni := func(code string) (float64, bool) {
+		mid, ok := paymentFallbackRates[code]
+		if !ok {
+			return 0, false
+		}
+		return mid * (1 + paymentSpreadRate), true
 	}
-	return amount * fromRate / toRate
+
+	var bruto float64
+	var effectiveKurs float64
+	if fromCurrency == "RSD" {
+		// RSD → strani: klijent daje RSD, banka prodaje stranu valutu po prodajnom kursu.
+		toRate, ok := prodajni(toCurrency)
+		if !ok || toRate == 0 {
+			return amount, 1, 0
+		}
+		bruto = amount / toRate
+		effectiveKurs = 1 / toRate
+	} else if toCurrency == "RSD" {
+		// strani → RSD: klijent prodaje stranu valutu, banka kupuje po kupovnom kursu.
+		fromRate, ok := kupovni(fromCurrency)
+		if !ok {
+			return amount, 1, 0
+		}
+		bruto = amount * fromRate
+		effectiveKurs = fromRate
+	} else {
+		// Kros-valutna: X → RSD (kupovni) → Y (prodajni)
+		fromRate, fromOK := kupovni(fromCurrency)
+		toRate, toOK := prodajni(toCurrency)
+		if !fromOK || !toOK || toRate == 0 {
+			return amount, 1, 0
+		}
+		bruto = amount * fromRate / toRate
+		effectiveKurs = fromRate / toRate
+	}
+
+	p := bruto * paymentProvizijaRate
+	if p < 0 {
+		p = 0
+	}
+	net = bruto - p
+	if net < 0 {
+		net = 0
+	}
+	return net, effectiveKurs, p
+}
+
+// convertPaymentAmount konvertuje iznos iz fromCurrency u toCurrency koristeći srednje kurseve (bez provizije).
+// Ostavljeno za kompatibilnost — za plaćanja koristiti convertPaymentAmountWithFee.
+func convertPaymentAmount(fromCurrency, toCurrency string, amount float64) float64 {
+	net, _, _ := convertPaymentAmountWithFee(fromCurrency, toCurrency, amount)
+	return net
 }
