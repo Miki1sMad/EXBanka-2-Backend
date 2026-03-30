@@ -421,36 +421,79 @@ func (r *kreditRepository) ApproveKreditRequest(
 			return fmt.Errorf("kreiranje rate: %w", err)
 		}
 
-		// ── 5: kredituj račun klijenta ───────────────────────────────────────
-		// Koristimo broj_racuna da pronađemo id jer transakcija zahteva racun_id.
-		var racunID int64
+		// ── 5: pronađi i zaključaj trezorski račun za datu valutu ───────────
+		// trezorVlasnikID = 2 odgovara trezor@exbanka.rs (garantovano migracijama).
+		// FOR UPDATE sprečava souběžne izmene istog trezorskog računa.
+		var trezorRacunID int64
 		err := tx.WithContext(ctx).
-			Raw(`SELECT id FROM core_banking.racun WHERE broj_racuna = ? LIMIT 1`,
-				input.BrojRacuna).
-			Scan(&racunID).Error
-		if err != nil || racunID == 0 {
-			return fmt.Errorf("pronalaženje računa %s: %w", input.BrojRacuna, err)
+			Raw(`SELECT r.id
+			     FROM core_banking.racun r
+			     JOIN core_banking.valuta v ON v.id = r.id_valute
+			     WHERE r.id_vlasnika = ?
+			       AND v.oznaka      = ?
+			       AND r.status      = 'AKTIVAN'
+			     LIMIT 1
+			     FOR UPDATE`,
+				trezorVlasnikID, input.Valuta).
+			Scan(&trezorRacunID).Error
+		if err != nil || trezorRacunID == 0 {
+			return fmt.Errorf("pronalaženje trezorskog računa za valutu %s: %w", input.Valuta, err)
 		}
 
+		// ── 6: pronađi i zaključaj račun klijenta ────────────────────────────
+		var klijentRacunID int64
+		err = tx.WithContext(ctx).
+			Raw(`SELECT id FROM core_banking.racun WHERE broj_racuna = ? FOR UPDATE`,
+				input.BrojRacuna).
+			Scan(&klijentRacunID).Error
+		if err != nil || klijentRacunID == 0 {
+			return fmt.Errorf("pronalaženje računa klijenta %s: %w", input.BrojRacuna, err)
+		}
+
+		now := time.Now().UTC()
+
+		// ── 7: teret trezorskog računa — isplata kredita ─────────────────────
+		if err := tx.WithContext(ctx).
+			Exec(`UPDATE core_banking.racun
+			         SET stanje_racuna = stanje_racuna - ?
+			       WHERE id = ?`,
+				input.IznosKredita, trezorRacunID).Error; err != nil {
+			return fmt.Errorf("terećenje trezorskog računa pri isplati kredita: %w", err)
+		}
+
+		// ── 8: ISPLATA transakcija za trezorski račun ────────────────────────
+		trezorTxIsplata := transakcijaInsertModel{
+			RacunID:          trezorRacunID,
+			TipTransakcije:   "ISPLATA",
+			Iznos:            input.IznosKredita,
+			Opis:             fmt.Sprintf("Isplata kredita %s klijentu", input.BrojKredita),
+			VremeIzvrsavanja: now,
+			Status:           "IZVRSEN",
+		}
+		if err := tx.WithContext(ctx).Create(&trezorTxIsplata).Error; err != nil {
+			return fmt.Errorf("kreiranje trezorske transakcije za isplatu kredita: %w", err)
+		}
+
+		// ── 9: kredituj račun klijenta ───────────────────────────────────────
 		if err := tx.WithContext(ctx).
 			Exec(`UPDATE core_banking.racun
 			         SET stanje_racuna = stanje_racuna + ?
 			       WHERE id = ?`,
-				input.IznosKredita, racunID).Error; err != nil {
-			return fmt.Errorf("kreditovanje računa: %w", err)
+				input.IznosKredita, klijentRacunID).Error; err != nil {
+			return fmt.Errorf("kreditovanje računa klijenta: %w", err)
 		}
 
-		// ── 6: UPLATA transakcija ────────────────────────────────────────────
-		t := transakcijaInsertModel{
-			RacunID:          racunID,
+		// ── 10: UPLATA transakcija za račun klijenta ─────────────────────────
+		klijentTxUplata := transakcijaInsertModel{
+			RacunID:          klijentRacunID,
 			TipTransakcije:   "UPLATA",
 			Iznos:            input.IznosKredita,
 			Opis:             fmt.Sprintf("Uplata po osnovu kredita %s", input.BrojKredita),
-			VremeIzvrsavanja: time.Now().UTC(),
+			VremeIzvrsavanja: now,
 			Status:           "IZVRSEN",
 		}
-		if err := tx.WithContext(ctx).Create(&t).Error; err != nil {
-			return fmt.Errorf("kreiranje transakcije: %w", err)
+		if err := tx.WithContext(ctx).Create(&klijentTxUplata).Error; err != nil {
+			return fmt.Errorf("kreiranje transakcije klijenta za uplatu kredita: %w", err)
 		}
 
 		return nil
@@ -714,6 +757,46 @@ func (r *kreditRepository) ProcessInstallmentPayment(
 		}
 		if err := tx.WithContext(ctx).Create(&t).Error; err != nil {
 			return fmt.Errorf("kreiranje transakcije za ratu: %w", err)
+		}
+
+		// ── 4b: pronađi i zaključaj trezorski račun za datu valutu ──────────
+		// trezorVlasnikID = 2 odgovara trezor@exbanka.rs (garantovano migracijama).
+		var trezorRacunID int64
+		err = tx.WithContext(ctx).
+			Raw(`SELECT r.id
+			     FROM core_banking.racun r
+			     JOIN core_banking.valuta v ON v.id = r.id_valute
+			     WHERE r.id_vlasnika = ?
+			       AND v.oznaka      = ?
+			       AND r.status      = 'AKTIVAN'
+			     LIMIT 1
+			     FOR UPDATE`,
+				trezorVlasnikID, input.Valuta).
+			Scan(&trezorRacunID).Error
+		if err != nil || trezorRacunID == 0 {
+			return fmt.Errorf("pronalaženje trezorskog računa za valutu %s: %w", input.Valuta, err)
+		}
+
+		// ── 4c: kredituj trezorski račun za iznos naplaćene rate ─────────────
+		if err := tx.WithContext(ctx).
+			Exec(`UPDATE core_banking.racun
+			         SET stanje_racuna = stanje_racuna + ?
+			       WHERE id = ?`,
+				input.IznosRate, trezorRacunID).Error; err != nil {
+			return fmt.Errorf("kreditovanje trezorskog računa pri naplati rate: %w", err)
+		}
+
+		// ── 4d: UPLATA transakcija za trezorski račun ────────────────────────
+		trezorTxUplata := transakcijaInsertModel{
+			RacunID:          trezorRacunID,
+			TipTransakcije:   "UPLATA",
+			Iznos:            input.IznosRate,
+			Opis:             fmt.Sprintf("Naplata rate kredita (rata ID: %d)", input.RataID),
+			VremeIzvrsavanja: now,
+			Status:           "IZVRSEN",
+		}
+		if err := tx.WithContext(ctx).Create(&trezorTxUplata).Error; err != nil {
+			return fmt.Errorf("kreiranje trezorske transakcije za naplatu rate: %w", err)
 		}
 
 		// ── 5: označi ratu PLACENO ───────────────────────────────────────────
