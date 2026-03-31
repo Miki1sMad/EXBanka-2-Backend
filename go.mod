@@ -9,6 +9,7 @@ require (
 	github.com/cucumber/godog v0.15.1
 	github.com/gin-gonic/gin v1.9.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.28.0
 	github.com/jackc/pgx/v5 v5.5.5
 	github.com/joho/godotenv v1.5.1
@@ -58,6 +59,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
+	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/pflag v1.0.7 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect

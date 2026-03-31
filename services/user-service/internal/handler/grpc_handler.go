@@ -38,23 +38,26 @@ type UserHandler struct {
 	accessSecret     string               // HMAC secret for signing access tokens
 	refreshSecret    string               // HMAC secret for signing refresh tokens
 	activationSecret string               // HMAC secret for signing activation/reset tokens
-	publisher        utils.EmailPublisher // abstracts RabbitMQ publishing for testability
-	clientSvc        domain.ClientService // use-case layer for client operations
+	publisher             utils.EmailPublisher        // abstracts RabbitMQ publishing for testability
+	userCreatedPublisher  utils.UserCreatedPublisher  // publishes employee-created events to bank-service
+	clientSvc             domain.ClientService        // use-case layer for client operations
 }
 
 // NewUserHandler constructs a UserHandler.
 // sqlDB is required for handlers that need multi-statement transactions.
 // publisher handles async email event dispatch; inject utils.NewAMQPPublisher in production.
+// userCreatedPublisher notifies bank-service of new employees; inject utils.NewAMQPUserCreatedPublisher in production.
 // clientSvc handles client use-case logic; inject service.NewClientService in production.
-func NewUserHandler(q db.Querier, sqlDB *sql.DB, accessSecret, refreshSecret, activationSecret string, publisher utils.EmailPublisher, clientSvc domain.ClientService) *UserHandler {
+func NewUserHandler(q db.Querier, sqlDB *sql.DB, accessSecret, refreshSecret, activationSecret string, publisher utils.EmailPublisher, userCreatedPublisher utils.UserCreatedPublisher, clientSvc domain.ClientService) *UserHandler {
 	return &UserHandler{
-		querier:          q,
-		sqlDB:            sqlDB,
-		accessSecret:     accessSecret,
-		refreshSecret:    refreshSecret,
-		activationSecret: activationSecret,
-		publisher:        publisher,
-		clientSvc:        clientSvc,
+		querier:              q,
+		sqlDB:                sqlDB,
+		accessSecret:         accessSecret,
+		refreshSecret:        refreshSecret,
+		activationSecret:     activationSecret,
+		publisher:            publisher,
+		userCreatedPublisher: userCreatedPublisher,
+		clientSvc:            clientSvc,
 	}
 }
 
@@ -170,19 +173,34 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 	}
 
 	// ── 7. Assign permissions ─────────────────────────────────────────────────
-	// ADMIN users derive all permissions from their user_type in the JWT; no
-	// DB permission rows are required or meaningful for them.
-	if userType != "ADMIN" {
-		for _, code := range req.Permissions {
-			if strings.TrimSpace(code) == "" {
-				continue
-			}
-			if err := qtx.AssignUserPermission(ctx, db.AssignUserPermissionParams{
-				UserID:         newUser.ID,
-				PermissionCode: code,
-			}); err != nil {
-				return nil, status.Errorf(codes.Internal, "failed to assign permission %q", code)
-			}
+	// Build the effective permission list by starting from whatever the caller
+	// supplied, then auto-deriving SUPERVISOR / AGENT from the employee's
+	// position and always granting SUPERVISOR to ADMIN accounts.
+	effectivePerms := make([]string, 0, len(req.Permissions)+1)
+	effectivePerms = append(effectivePerms, req.Permissions...)
+
+	switch strings.TrimSpace(req.Position) {
+	case "Supervizor":
+		effectivePerms = appendIfMissing(effectivePerms, PermSupervisor)
+	case "Agent":
+		effectivePerms = appendIfMissing(effectivePerms, PermAgent)
+	}
+
+	// ADMINs always carry SUPERVISOR in the DB so that bank-service can
+	// recognise them as actuaries via the user_created event.
+	if userType == "ADMIN" {
+		effectivePerms = appendIfMissing(effectivePerms, PermSupervisor)
+	}
+
+	for _, code := range effectivePerms {
+		if strings.TrimSpace(code) == "" {
+			continue
+		}
+		if err := qtx.AssignUserPermission(ctx, db.AssignUserPermissionParams{
+			UserID:         newUser.ID,
+			PermissionCode: code,
+		}); err != nil {
+			return nil, status.Errorf(codes.Internal, "failed to assign permission %q", code)
 		}
 	}
 
@@ -204,6 +222,17 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 		Token: token,
 	}); err != nil {
 		log.Printf("[create-employee] failed to publish activation event for %s: %v", req.Email, err)
+	}
+
+	// Notify bank-service so it can auto-provision an actuary profile for
+	// SUPERVISOR and AGENT employees. Use effectivePerms (not req.Permissions)
+	// so auto-derived and ADMIN permissions are included. Fire-and-forget.
+	if err := h.userCreatedPublisher.Publish(utils.UserCreatedEvent{
+		EmployeeID:  newUser.ID,
+		Email:       newUser.Email,
+		Permissions: effectivePerms,
+	}); err != nil {
+		log.Printf("[create-employee] failed to publish user-created event for employee %d: %v", newUser.ID, err)
 	}
 
 	return &pb.CreateEmployeeResponse{
@@ -821,14 +850,17 @@ func (h *UserHandler) GetEmployeeByID(ctx context.Context, req *pb.GetEmployeeBy
 	}
 	isAdmin := claims.UserType == "ADMIN"
 	hasManageUsers := false
+	hasSupervisor := false
 	for _, p := range claims.Permissions {
 		if p == "MANAGE_USERS" {
 			hasManageUsers = true
-			break
+		}
+		if p == "SUPERVISOR" {
+			hasSupervisor = true
 		}
 	}
-	if !isAdmin && !hasManageUsers {
-		return nil, status.Errorf(codes.PermissionDenied, "only admins or users with MANAGE_USERS permission can fetch employee details")
+	if !isAdmin && !hasManageUsers && !hasSupervisor {
+		return nil, status.Errorf(codes.PermissionDenied, "only admins or users with MANAGE_USERS or SUPERVISOR permission can fetch employee details")
 	}
 
 	// ── 2. Fetch employee row ─────────────────────────────────────────────────

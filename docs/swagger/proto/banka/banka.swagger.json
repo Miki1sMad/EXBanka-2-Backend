@@ -1494,6 +1494,25 @@
         "iznos": {
           "type": "number",
           "format": "double"
+        },
+        "krajnjiIznos": {
+          "type": "number",
+          "format": "double",
+          "title": "iznos koji primalac dobija (u valuti primaoca); 0 = ista valuta"
+        },
+        "provizija": {
+          "type": "number",
+          "format": "double",
+          "title": "provizija u valuti primaoca; 0 = ista valuta"
+        },
+        "kurs": {
+          "type": "number",
+          "format": "double",
+          "title": "efektivni kurs konverzije; 0 = ista valuta"
+        },
+        "valutaPrimaoca": {
+          "type": "string",
+          "title": "valuta primaoca; prazno = ista valuta kao platioc"
         }
       },
       "description": "CreatePaymentIntentResponse — odgovor pri kreiranju naloga."
@@ -2065,6 +2084,15 @@
           "type": "string",
           "format": "int64",
           "title": "alias za id, za frontend kompatibilnost"
+        },
+        "kurs": {
+          "type": "number",
+          "format": "double",
+          "title": "efektivni kurs konverzije; 0 = ista valuta"
+        },
+        "valutaPrimaoca": {
+          "type": "string",
+          "title": "valuta primaoca; prazno = ista valuta"
         }
       },
       "description": "PaymentIntentItem — detalji jednog naloga plaćanja."
