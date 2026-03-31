@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	pb "banka-backend/proto/banka"
+	pbactuary "banka-backend/proto/actuary"
 	auth "banka-backend/shared/auth"
 	"banka-backend/services/bank-service/internal/config"
 	"banka-backend/services/bank-service/internal/domain"
@@ -38,9 +40,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// grpcLocalTarget is the address the gRPC-Gateway uses to dial back to the
-// local gRPC server. Always localhost — both servers live in the same process.
-const grpcLocalTarget = "localhost:50051"
+// grpcLocalHost is the hostname the gRPC-Gateway uses to dial back to the
+// local gRPC server. Port is extracted from cfg.GRPCAddr at runtime so the
+// two always stay in sync regardless of the GRPC_ADDR env var.
+const grpcLocalHost = "localhost"
 
 func main() {
 	// ── 1. Config ────────────────────────────────────────────────────────────
@@ -149,6 +152,10 @@ func main() {
 		accountPublisher = &worker.NoOpAccountEmailPublisher{}
 	}
 
+	actuaryRepo := repository.NewActuaryRepository(sqlDB)
+	actuaryService := service.NewActuaryService(actuaryRepo)
+	actuaryHandler := handler.NewActuaryHandler(actuaryService)
+
 	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, userClient, accountPublisher)
 	exchangeProvider := repository.NewExchangeRateProvider(cfg.ExchangeRateAPIKey, cfg.ExchangeRateAPIBaseURL)
 	exchangeTransferRepo := repository.NewExchangeTransferRepository(db)
@@ -170,8 +177,19 @@ func main() {
 	// ── 5. gRPC server ───────────────────────────────────────────────────────
 	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, authInterceptor.Unary())
 	pb.RegisterBankaServiceServer(grpcSrv.Server(), bankHandler)
+	pbactuary.RegisterActuaryServiceServer(grpcSrv.Server(), actuaryHandler)
 
 	// ── 6. gRPC-Gateway: dial the local gRPC server ──────────────────────────
+	// Derive the gateway target from cfg.GRPCAddr so they always stay in sync.
+	// cfg.GRPCAddr is e.g. "0.0.0.0:50051"; we replace the bind host with
+	// localhost because gateway and gRPC server share the same process.
+	_, grpcPort, err := net.SplitHostPort(cfg.GRPCAddr)
+	if err != nil {
+		log.Fatalf("[gateway] invalid GRPC_ADDR %q: %v", cfg.GRPCAddr, err)
+	}
+	grpcLocalTarget := net.JoinHostPort(grpcLocalHost, grpcPort)
+	log.Printf("[gateway] gRPC local target: %s", grpcLocalTarget)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -194,6 +212,13 @@ func main() {
 		pb.NewBankaServiceClient(conn),
 	); err != nil {
 		log.Fatalf("[gateway] register handler client: %v", err)
+	}
+	if err := pbactuary.RegisterActuaryServiceHandlerClient(
+		ctx,
+		gwMux,
+		pbactuary.NewActuaryServiceClient(conn),
+	); err != nil {
+		log.Fatalf("[gateway] register actuary handler client: %v", err)
 	}
 
 	// Kombinovani HTTP mux: gRPC-Gateway + direktni HTTP handleri.
@@ -220,6 +245,15 @@ func main() {
 	// Worker koristi isti ctx koji se otkazuje pri SIGINT/SIGTERM,
 	// što garantuje graceful shutdown bez dodatne sinhronizacije.
 	go installmentWorker.Start(ctx)
+
+	// ── 7b. Start ActuaryConsumer (RabbitMQ event listener) ──────────────────
+	// Listens on the user_created queue and auto-provisions actuary profiles
+	// for SUPERVISOR and AGENT employees created in user-service.
+	if cfg.RabbitMQURL != "" {
+		go worker.StartActuaryConsumer(ctx, cfg.RabbitMQURL, actuaryRepo)
+	} else {
+		log.Printf("[main] RABBITMQ_URL nije postavljen — ActuaryConsumer neće biti pokrenut")
+	}
 
 	// ── 8. Start gRPC server ─────────────────────────────────────────────────
 	go func() {

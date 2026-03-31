@@ -84,7 +84,7 @@ func main() {
 	})
 	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, authInterceptor.Unary())
 
-	handler := userhandler.NewUserHandler(querier, sqlDB, cfg.JWTAccessSecret, cfg.JWTRefreshSecret, cfg.JWTActivationSecret, utils.NewAMQPPublisher(cfg.RabbitMQURL), userservice.NewClientService(querier))
+	handler := userhandler.NewUserHandler(querier, sqlDB, cfg.JWTAccessSecret, cfg.JWTRefreshSecret, cfg.JWTActivationSecret, utils.NewAMQPPublisher(cfg.RabbitMQURL), utils.NewAMQPUserCreatedPublisher(cfg.RabbitMQURL), userservice.NewClientService(querier))
 	pb.RegisterUserServiceServer(grpcSrv.Server(), handler)
 
 	// ── 4. gRPC-Gateway: dial the local gRPC server ──────────────────────────

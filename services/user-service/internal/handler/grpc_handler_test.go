@@ -35,6 +35,7 @@ func newHandler(q *mocks.MockQuerier, pub *mocks.MockEmailPublisher) *handler.Us
 		testutil.TestRefreshSecret,
 		testutil.TestActivationSecret,
 		pub,
+		&utils.NoOpUserCreatedPublisher{},
 		nil, // clientSvc — not needed by the existing tests
 	)
 }
@@ -48,6 +49,7 @@ func newHandlerWithClientSvc(clientSvc *mocks.MockClientService) *handler.UserHa
 		testutil.TestRefreshSecret,
 		testutil.TestActivationSecret,
 		&mocks.MockEmailPublisher{},
+		&utils.NoOpUserCreatedPublisher{},
 		clientSvc,
 	)
 }

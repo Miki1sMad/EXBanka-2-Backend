@@ -78,6 +78,8 @@ services:
       - DB_USER=bank_admin
       - DB_PASSWORD=super_secret_password
       - DB_NAME=bank_db
+      - JWT_ACCESS_SECRET=${JWT_ACCESS_SECRET:-change-me-access-secret}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-change-me-refresh-secret}
       - RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "8082:8080"   # host 8082 → container 8080

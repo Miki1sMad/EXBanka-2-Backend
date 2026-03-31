@@ -21,6 +21,7 @@ import (
 	sqlc "banka-backend/services/user-service/internal/database/sqlc"
 	"banka-backend/services/user-service/internal/handler"
 	"banka-backend/services/user-service/internal/testutil"
+	"banka-backend/services/user-service/internal/utils"
 	"banka-backend/services/user-service/mocks"
 )
 
@@ -32,6 +33,7 @@ func newTxHandler(q *mocks.MockQuerier, pub *mocks.MockEmailPublisher, db *sql.D
 		testutil.TestRefreshSecret,
 		testutil.TestActivationSecret,
 		pub,
+		&utils.NoOpUserCreatedPublisher{},
 		nil, // clientSvc — not exercised by transaction tests
 	)
 }
@@ -182,7 +184,7 @@ func TestCreateEmployee_CommitError(t *testing.T) {
 	assert.Equal(t, codes.Internal, grpcCode(err))
 }
 
-func TestCreateEmployee_AdminType_SkipsPermissions(t *testing.T) {
+func TestCreateEmployee_AdminType_AssignsSupervisor(t *testing.T) {
 	db, smock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()
@@ -196,7 +198,11 @@ func TestCreateEmployee_AdminType_SkipsPermissions(t *testing.T) {
 			AddRow(int64(4), "admin2@test.com", "ADMIN", "Dan", "Brown", true, time.Now()))
 	smock.ExpectExec(regexp.QuoteMeta("INSERT INTO employee_details")).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-	// No permission INSERT expected — ADMIN skips the loop
+	// ADMIN: VIEW_ACCOUNTS (from req.Permissions) + SUPERVISOR (auto-added for ADMIN)
+	smock.ExpectExec(regexp.QuoteMeta("INSERT INTO user_permissions")).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	smock.ExpectExec(regexp.QuoteMeta("INSERT INTO user_permissions")).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	smock.ExpectCommit()
 
 	pub.On("Publish", mock.Anything).Return(nil)
@@ -205,11 +211,10 @@ func TestCreateEmployee_AdminType_SkipsPermissions(t *testing.T) {
 	ctx := testutil.AdminContext()
 
 	resp, err := h.CreateEmployee(ctx, &pb.CreateEmployeeRequest{
-		Email:     "admin2@test.com",
-		FirstName: "Dan",
-		LastName:  "Brown",
-		UserType:  pb.UserType_USER_TYPE_ADMIN,
-		// Permissions are ignored for ADMIN
+		Email:       "admin2@test.com",
+		FirstName:   "Dan",
+		LastName:    "Brown",
+		UserType:    pb.UserType_USER_TYPE_ADMIN,
 		Permissions: []string{"VIEW_ACCOUNTS"},
 	})
 	require.NoError(t, err)

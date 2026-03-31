@@ -1,0 +1,161 @@
+syntax = "proto3";
+
+package actuary.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "banka-backend/proto/actuary;actuaryv1";
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+// ActuaryType distinguishes supervisors (no limit, always approved) from
+// agents (have a daily limit and may require approval).
+enum ActuaryType {
+  ACTUARY_TYPE_UNSPECIFIED = 0;
+  ACTUARY_TYPE_SUPERVISOR  = 1;
+  ACTUARY_TYPE_AGENT       = 2;
+}
+
+// ─── Core Domain Message ──────────────────────────────────────────────────────
+
+// ActuaryInfo is the extension record stored alongside an Employee.
+// Supervisors always have limit=0, used_limit=0, need_approval=false.
+message ActuaryInfo {
+  int64       id            = 1;  // PK of the actuary_info record
+  int64       employee_id   = 2;  // FK → users table (employee)
+  ActuaryType actuary_type  = 3;
+  double      limit         = 4;  // daily spending limit (RSD); 0 = no limit (supervisor)
+  double      used_limit    = 5;  // amount consumed today; reset at 23:59 or manually
+  bool        need_approval = 6;  // if true, all agent orders need supervisor approval
+}
+
+// AgentListItem is the per-row projection for the supervisor portal.
+// Combines ActuaryInfo fields with identifying user fields (fetched from user-service).
+message AgentListItem {
+  int64  id            = 1;  // actuary_info id
+  int64  employee_id   = 2;
+  string email         = 3;
+  string first_name    = 4;
+  string last_name     = 5;
+  string position      = 6;
+  double limit         = 7;
+  double used_limit    = 8;
+  bool   need_approval = 9;
+}
+
+// ─── GetMyActuaryInfo ─────────────────────────────────────────────────────────
+// Returns the ActuaryInfo for the currently authenticated actuary (from JWT).
+
+message GetMyActuaryInfoResponse {
+  ActuaryInfo actuary = 1;
+}
+
+// ─── GetActuaryByEmployeeID ───────────────────────────────────────────────────
+// Internal / admin use: fetch actuary info by employee_id.
+
+message GetActuaryByEmployeeIDRequest {
+  int64 employee_id = 1;
+}
+
+message GetActuaryByEmployeeIDResponse {
+  ActuaryInfo actuary = 1;
+}
+
+// ─── GetAgents ────────────────────────────────────────────────────────────────
+// Supervisor only. Returns a filtered list of agents (never supervisors).
+// All filter fields are optional; "" or 0 means no filter on that field.
+
+message GetAgentsRequest {
+  string email      = 1; // partial match, case-insensitive; "" = no filter
+  string first_name = 2;
+  string last_name  = 3;
+  string position   = 4;
+}
+
+message GetAgentsResponse {
+  repeated AgentListItem agents = 1;
+}
+
+// ─── SetAgentLimit ────────────────────────────────────────────────────────────
+// Supervisor only. Updates the daily spending limit for a given agent.
+// Setting limit = 0 effectively disables spending (all orders require approval).
+
+message SetAgentLimitRequest {
+  int64  employee_id = 1; // target agent identified by employee_id
+  double limit       = 2; // new limit value (>= 0)
+}
+
+// ─── ResetAgentUsedLimit ──────────────────────────────────────────────────────
+// Supervisor only. Manually resets an agent's used_limit back to 0.
+// (Automatic daily reset also happens at 23:59, handled by the scheduler.)
+
+message ResetAgentUsedLimitRequest {
+  int64 employee_id = 1; // target agent identified by employee_id
+}
+
+// ─── SetAgentNeedApproval ─────────────────────────────────────────────────────
+// Supervisor only. Toggles the need_approval flag for a given agent.
+// When true, every order created by this agent must be manually approved.
+
+message SetAgentNeedApprovalRequest {
+  int64 employee_id   = 1; // target agent identified by employee_id
+  bool  need_approval = 2;
+}
+
+// ─── Service ──────────────────────────────────────────────────────────────────
+
+service ActuaryService {
+
+  // GetMyActuaryInfo — Actuary only (supervisor or agent).
+  // Returns the ActuaryInfo record for the calling employee.
+  rpc GetMyActuaryInfo(google.protobuf.Empty) returns (GetMyActuaryInfoResponse) {
+    option (google.api.http) = {
+      get: "/actuary/me"
+    };
+  }
+
+  // GetActuaryByEmployeeID — Supervisor only (internal use).
+  // Returns ActuaryInfo for the specified employee, or NOT_FOUND if they are not an actuary.
+  rpc GetActuaryByEmployeeID(GetActuaryByEmployeeIDRequest) returns (GetActuaryByEmployeeIDResponse) {
+    option (google.api.http) = {
+      get: "/actuary/employee/{employee_id}"
+    };
+  }
+
+  // GetAgents — Supervisor only.
+  // Returns the list of agents visible in the actuary management portal.
+  // Supports optional partial-match filters on email, first_name, last_name, position.
+  rpc GetAgents(GetAgentsRequest) returns (GetAgentsResponse) {
+    option (google.api.http) = {
+      get: "/actuary/agents"
+    };
+  }
+
+  // SetAgentLimit — Supervisor only.
+  // Updates the daily spending limit for the specified agent.
+  rpc SetAgentLimit(SetAgentLimitRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      patch: "/actuary/agents/{employee_id}/limit"
+      body: "*"
+    };
+  }
+
+  // ResetAgentUsedLimit — Supervisor only.
+  // Resets the agent's used_limit to 0 (manual daily reset).
+  rpc ResetAgentUsedLimit(ResetAgentUsedLimitRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      post: "/actuary/agents/{employee_id}/reset-limit"
+      body: "*"
+    };
+  }
+
+  // SetAgentNeedApproval — Supervisor only.
+  // Sets or clears the need_approval flag for the specified agent.
+  rpc SetAgentNeedApproval(SetAgentNeedApprovalRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      patch: "/actuary/agents/{employee_id}/need-approval"
+      body: "*"
+    };
+  }
+}
