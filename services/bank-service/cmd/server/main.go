@@ -30,6 +30,8 @@ import (
 	"banka-backend/services/bank-service/internal/handler"
 	"banka-backend/services/bank-service/internal/repository"
 	"banka-backend/services/bank-service/internal/service"
+	"banka-backend/services/bank-service/internal/trading"
+	tradingworker "banka-backend/services/bank-service/internal/trading/worker"
 	"banka-backend/services/bank-service/internal/transport"
 	"banka-backend/services/bank-service/internal/worker"
 
@@ -174,10 +176,16 @@ func main() {
 	exchangeTransferRepo := repository.NewExchangeTransferRepository(db)
 	exchangeService := service.NewExchangeService(exchangeProvider, exchangeTransferRepo, cfg.ExchangeSpreadRate, cfg.ExchangeProvizijaRate)
 
-	// tradingService is wired up in a later sprint when OrderRepository,
-	// MarginChecker, and ActuaryRepository implementations are complete.
-	// Pass nil for now — the handler methods will return Internal error until wired.
-	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, nil, userClient, accountPublisher)
+	orderRepo := repository.NewOrderRepository(db)
+	marginChecker := repository.NewMarginChecker(db)
+	fundsManager := repository.NewFundsManager(db)
+	tradingService := trading.NewTradingService(orderRepo, listingService, actuaryRepo, marginChecker, fundsManager)
+
+	// ── Trading engine (async order execution) ────────────────────────────────
+	marketDataProvider := tradingworker.NewListingMarketDataProvider(listingRepo)
+	tradingEngine := tradingworker.NewEngine(orderRepo, marketDataProvider, fundsManager, 0)
+
+	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, tradingService, userClient, accountPublisher)
 
 	receiptHandler := handler.NewPaymentReceiptHandler(paymentService, cfg.JWTAccessSecret)
 	marketModeHTTPHandler := handler.NewMarketModeHTTPHandler(marketModeStore, cfg.JWTAccessSecret)
@@ -265,6 +273,9 @@ func main() {
 	// Worker koristi isti ctx koji se otkazuje pri SIGINT/SIGTERM,
 	// što garantuje graceful shutdown bez dodatne sinhronizacije.
 	go installmentWorker.Start(ctx)
+
+	// ── 7e. Start TradingEngine (async order execution + fund settlement) ─────
+	go tradingEngine.Start(ctx)
 
 	// ── 7c. Start ListingRefresherWorker (osvežava cene hartija periodično) ────
 	listingRefreshInterval := time.Duration(cfg.ListingRefreshIntervalMinutes) * time.Minute

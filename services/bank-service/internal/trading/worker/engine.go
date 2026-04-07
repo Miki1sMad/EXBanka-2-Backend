@@ -123,6 +123,7 @@ const (
 type Engine struct {
 	orders trading.OrderRepository
 	market MarketDataProvider
+	funds  trading.FundsManager
 
 	// active tracks orderIDs that are currently being processed by a goroutine.
 	// Using sync.Map because reads dominate and keys are added/deleted by
@@ -132,13 +133,14 @@ type Engine struct {
 	pollInterval time.Duration
 }
 
-// NewEngine constructs an Engine with its two dependencies.
+// NewEngine constructs an Engine with its three dependencies.
 //
 // pollInterval controls how often the main loop scans for APPROVED orders.
 // Pass 0 to use the package-level defaultPollInterval.
 func NewEngine(
 	orders trading.OrderRepository,
 	market MarketDataProvider,
+	funds trading.FundsManager,
 	pollInterval time.Duration,
 ) *Engine {
 	if pollInterval <= 0 {
@@ -147,6 +149,7 @@ func NewEngine(
 	return &Engine{
 		orders:       orders,
 		market:       market,
+		funds:        funds,
 		pollInterval: pollInterval,
 	}
 }
@@ -418,6 +421,46 @@ func (e *Engine) executeOrder(ctx context.Context, order *trading.Order, effecti
 		// known limitation.
 		if _, err := e.orders.CreateTransaction(ctx, current.ID, chunkSize, executedPrice); err != nil {
 			return err
+		}
+
+		// ── 7b. Charge commission on first fill ───────────────────────────────
+		// Per spec: "Provizija se računa na celokupnog naloga" — commission is
+		// based on the FULL order notional, not just the partial chunk.
+		// We charge it exactly once on the first fill so that it is collected
+		// even if the remaining portions are later canceled by the user.
+		//
+		// Detection: before any fill, RemainingPortions == Quantity.
+		// After this fill we will decrement remaining, so this comparison
+		// reliably identifies the first partial fill.
+		if current.RemainingPortions == current.Quantity {
+			notional := executedPrice.Mul(decimal.NewFromInt(int64(current.Quantity)))
+			var commission decimal.Decimal
+			switch effectiveType {
+			case trading.OrderTypeMarket:
+				commission = trading.CalcMarketCommission(notional)
+			case trading.OrderTypeLimit:
+				commission = trading.CalcLimitCommission(notional)
+			}
+			if commission.IsPositive() {
+				if err := e.funds.ChargeCommission(ctx, current.AccountID, commission); err != nil {
+					log.Printf("[trading/engine] order %d: charge commission error: %v", current.ID, err)
+				} else {
+					log.Printf("[trading/engine] order %d: commission charged: %s", current.ID, commission.String())
+				}
+			}
+		}
+
+		// ── 7c. Settle funds for this fill chunk ──────────────────────────────
+		// fillAmount = contractSize × unitPrice × chunkSize
+		fillAmount := executedPrice.Mul(decimal.NewFromInt(int64(chunkSize)))
+		if current.Direction == trading.OrderDirectionBuy {
+			if err := e.funds.SettleBuyFill(ctx, current.AccountID, fillAmount); err != nil {
+				log.Printf("[trading/engine] order %d: settle buy fill: %v", current.ID, err)
+			}
+		} else {
+			if err := e.funds.CreditSellFill(ctx, current.AccountID, fillAmount); err != nil {
+				log.Printf("[trading/engine] order %d: credit sell fill: %v", current.ID, err)
+			}
 		}
 
 		// ── 8. Update remaining portions ──────────────────────────────────────

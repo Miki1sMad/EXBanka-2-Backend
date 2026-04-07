@@ -129,6 +129,20 @@ func calcStopLimitOrder(contractSize int32, limitPrice decimal.Decimal, quantity
 	return
 }
 
+// CalcMarketCommission returns the commission for a MARKET or STOP order:
+//
+//	min( 14% × notional, $7 )
+func CalcMarketCommission(notional decimal.Decimal) decimal.Decimal {
+	return marketCommissionFor(notional)
+}
+
+// CalcLimitCommission returns the commission for a LIMIT or STOP_LIMIT order:
+//
+//	min( 24% × notional, $12 )
+func CalcLimitCommission(notional decimal.Decimal) decimal.Decimal {
+	return limitCommissionFor(notional)
+}
+
 // CalcInitialMarginCost computes the capital an account must hold to open a
 // margin position.  The initial margin is set to 110 % of the maintenance
 // margin to provide a buffer above the liquidation threshold.

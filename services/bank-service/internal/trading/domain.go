@@ -248,6 +248,40 @@ type MarginChecker interface {
 	HasSufficientMargin(ctx context.Context, accountID int64, required decimal.Decimal) (bool, error)
 }
 
+// FundsManager handles account balance mutations that occur during the order
+// lifecycle.  All operations are applied atomically at the SQL level so that
+// a crash mid-update cannot leave the account in an inconsistent state.
+//
+// Lifecycle mapping:
+//
+//	BUY order APPROVED  → ReserveFunds  (stanje unchanged; rezervisana ↑)
+//	BUY fill executed   → SettleBuyFill (stanje ↓; rezervisana ↓ same amount)
+//	BUY order CANCELED  → ReleaseFunds  (stanje unchanged; rezervisana ↓)
+//	SELL fill executed  → CreditSellFill (stanje ↑)
+type FundsManager interface {
+	// ReserveFunds increases rezervisana_sredstva by amount.
+	// Called when a BUY order transitions to APPROVED.
+	ReserveFunds(ctx context.Context, accountID int64, amount decimal.Decimal) error
+
+	// ReleaseFunds decreases rezervisana_sredstva by amount (clamped to 0).
+	// Called when an APPROVED BUY order is canceled before full execution.
+	ReleaseFunds(ctx context.Context, accountID int64, amount decimal.Decimal) error
+
+	// SettleBuyFill atomically decreases both stanje_racuna and
+	// rezervisana_sredstva by amount.
+	// Called per partial fill of a BUY order.
+	SettleBuyFill(ctx context.Context, accountID int64, amount decimal.Decimal) error
+
+	// CreditSellFill increases stanje_racuna by amount.
+	// Called per partial fill of a SELL order.
+	CreditSellFill(ctx context.Context, accountID int64, amount decimal.Decimal) error
+
+	// ChargeCommission decreases stanje_racuna by the commission amount without
+	// touching rezervisana_sredstva (commission was never part of the reservation).
+	// Called once when an order is fully executed (MarkDone).
+	ChargeCommission(ctx context.Context, accountID int64, amount decimal.Decimal) error
+}
+
 // ─── Repository interface ─────────────────────────────────────────────────────
 
 // OrderRepository defines the data-access contract for the trading domain.

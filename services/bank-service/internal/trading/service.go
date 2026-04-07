@@ -25,6 +25,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"banka-backend/services/bank-service/internal/domain"
 
@@ -38,9 +39,10 @@ type tradingService struct {
 	listings  domain.ListingService  // ListingService (not Repository) — provides MaintenanceMargin
 	actuaries domain.ActuaryRepository
 	margin    MarginChecker
+	funds     FundsManager
 }
 
-// NewTradingService wires the service with its four dependencies.
+// NewTradingService wires the service with its five dependencies.
 // All parameters are interfaces; concrete implementations are provided by the
 // caller (main.go) at startup.
 func NewTradingService(
@@ -48,12 +50,14 @@ func NewTradingService(
 	listings domain.ListingService,
 	actuaries domain.ActuaryRepository,
 	margin MarginChecker,
+	funds FundsManager,
 ) TradingService {
 	return &tradingService{
 		orders:    orders,
 		listings:  listings,
 		actuaries: actuaries,
 		margin:    margin,
+		funds:     funds,
 	}
 }
 
@@ -236,6 +240,19 @@ func (s *tradingService) CreateOrder(ctx context.Context, req *CreateOrderReques
 	order, err := s.orders.Create(ctx, *req, status)
 	if err != nil {
 		return nil, fmt.Errorf("kreiranje naloga: %w", err)
+	}
+
+	// ── 5. Reserve funds for APPROVED BUY orders ──────────────────────────────
+	// PENDING orders are not reserved yet — funds are reserved when the
+	// supervisor approves them (see ApproveOrder).
+	if status == OrderStatusApproved && req.Direction == OrderDirectionBuy {
+		if err := s.reserveFundsForOrder(ctx, order); err != nil {
+			// Order is persisted but reservation failed — cancel it to keep DB consistent.
+			if _, cancelErr := s.orders.Cancel(ctx, order.ID); cancelErr != nil {
+				log.Printf("[trading] auto-otkazivanje naloga %d nakon greške rezervacije: %v", order.ID, cancelErr)
+			}
+			return nil, fmt.Errorf("rezervacija sredstava: %w", err)
+		}
 	}
 
 	return order, nil
@@ -432,6 +449,15 @@ func (s *tradingService) ApproveOrder(ctx context.Context, orderID int64, superv
 	if err != nil {
 		return nil, fmt.Errorf("odobravanje naloga %d: %w", orderID, err)
 	}
+
+	// Reserve funds now that the order transitions from PENDING to APPROVED.
+	// updated.Quantity is the full original quantity (no fills yet for PENDING orders).
+	if err := s.reserveFundsForOrder(ctx, updated); err != nil {
+		// Order is APPROVED in DB — log the failure but don't revert the approval.
+		// Engine will still execute; SettleBuyFill will debit stanje_racuna directly.
+		log.Printf("[trading] rezervacija sredstava za odobreni nalog %d nije uspela: %v", orderID, err)
+	}
+
 	return updated, nil
 }
 
@@ -490,6 +516,12 @@ func (s *tradingService) CancelOrder(ctx context.Context, orderID int64, request
 		return nil, fmt.Errorf("%w: nalog je u statusu %s (is_done=%v)", ErrInvalidOrderState, order.Status, order.IsDone)
 	}
 
+	// Release reserved funds before canceling — only APPROVED BUY orders have
+	// funds reserved.  PENDING orders were never charged.
+	if order.Status == OrderStatusApproved {
+		s.releaseFundsForOrder(ctx, order)
+	}
+
 	canceled, err := s.orders.Cancel(ctx, orderID)
 	if err != nil {
 		return nil, fmt.Errorf("otkazivanje naloga %d: %w", orderID, err)
@@ -511,4 +543,74 @@ func (s *tradingService) isSupervisor(ctx context.Context, userID int64) (bool, 
 		return false, fmt.Errorf("dohvatanje aktuar zapisa za korisnika %d: %w", userID, err)
 	}
 	return actuary.ActuaryType == domain.ActuaryTypeSupervisor, nil
+}
+
+// ─── Funds helpers ────────────────────────────────────────────────────────────
+
+// computeNotional calculates the notional value for a given order and quantity.
+// For MARKET orders, fetches the current Ask/Bid price from the listing service.
+// Used to determine how much to reserve or release from the account.
+func (s *tradingService) computeNotional(ctx context.Context, order *Order, qty int32) (decimal.Decimal, error) {
+	switch order.OrderType {
+	case OrderTypeMarket:
+		listing, err := s.listings.GetListingByID(ctx, order.ListingID)
+		if err != nil {
+			return decimal.Zero, fmt.Errorf("dohvatanje hartije %d za kalkulaciju iznosa: %w", order.ListingID, err)
+		}
+		var unitPrice decimal.Decimal
+		if order.Direction == OrderDirectionBuy {
+			unitPrice = decimal.NewFromFloat(listing.Ask)
+		} else {
+			unitPrice = decimal.NewFromFloat(listing.Bid)
+		}
+		return approxPrice(order.ContractSize, unitPrice, qty), nil
+
+	case OrderTypeLimit, OrderTypeStopLimit:
+		if order.PricePerUnit == nil {
+			return decimal.Zero, ErrLimitPriceRequired
+		}
+		return approxPrice(order.ContractSize, *order.PricePerUnit, qty), nil
+
+	case OrderTypeStop:
+		if order.StopPrice == nil {
+			return decimal.Zero, ErrStopPriceRequired
+		}
+		return approxPrice(order.ContractSize, *order.StopPrice, qty), nil
+
+	default:
+		return decimal.Zero, fmt.Errorf("%w: %s", ErrInvalidOrderType, order.OrderType)
+	}
+}
+
+// reserveFundsForOrder reserves the full order notional (based on Quantity) on
+// the account.  Only applicable to BUY orders.  Returns an error so callers can
+// react (cancel the order or log a visible warning) instead of silently skipping.
+func (s *tradingService) reserveFundsForOrder(ctx context.Context, order *Order) error {
+	if order.Direction != OrderDirectionBuy {
+		return nil
+	}
+	notional, err := s.computeNotional(ctx, order, order.Quantity)
+	if err != nil {
+		return fmt.Errorf("izračunavanje iznosa za rezervaciju (nalog %d): %w", order.ID, err)
+	}
+	if err := s.funds.ReserveFunds(ctx, order.AccountID, notional); err != nil {
+		return fmt.Errorf("rezervacija sredstava za nalog %d: %w", order.ID, err)
+	}
+	return nil
+}
+
+// releaseFundsForOrder releases the remaining notional (based on RemainingPortions)
+// from the account reservation.  Only applicable to APPROVED BUY orders.
+func (s *tradingService) releaseFundsForOrder(ctx context.Context, order *Order) {
+	if order.Direction != OrderDirectionBuy {
+		return
+	}
+	notional, err := s.computeNotional(ctx, order, order.RemainingPortions)
+	if err != nil {
+		log.Printf("[trading] izračunavanje iznosa za oslobađanje (nalog %d): %v", order.ID, err)
+		return
+	}
+	if err := s.funds.ReleaseFunds(ctx, order.AccountID, notional); err != nil {
+		log.Printf("[trading] oslobađanje sredstava za nalog %d: %v", order.ID, err)
+	}
 }

@@ -111,7 +111,7 @@ func (s *scenarioCtx) reset() {
 	repoMock.Mock.Test(nt)
 
 	pub := &bddPublisher{}
-	h := handler.NewBankHandler(nil, nil, nil, nil, svcMock, nil, nil, nil, nil, nil, nil)
+	h := handler.NewBankHandler(nil, nil, nil, nil, svcMock, nil, nil, nil, nil, nil, nil, nil)
 	w := worker.NewInstallmentWorker(repoMock, pub, time.Hour, 72*time.Hour, 0.05)
 
 	s.kreditSvcMock = svcMock
