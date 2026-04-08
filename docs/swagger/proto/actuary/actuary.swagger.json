@@ -64,6 +64,37 @@
         "tags": [
           "ActuaryService"
         ]
+      },
+      "post": {
+        "summary": "CreateAgent — Admin only.\nCreates an AGENT actuary record for the given employee with an optional initial limit.",
+        "operationId": "ActuaryService_CreateAgent",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateAgentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response.",
+            "schema": {
+              "$ref": "#/definitions/rpcStatus"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateAgentRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ActuaryService"
+        ]
       }
     },
     "/actuary/agents/{employeeId}/limit": {
@@ -378,6 +409,29 @@
         }
       },
       "description": "AgentListItem is the per-row projection for the supervisor portal.\nCombines ActuaryInfo fields with identifying user fields (fetched from user-service)."
+    },
+    "v1CreateAgentRequest": {
+      "type": "object",
+      "properties": {
+        "employeeId": {
+          "type": "string",
+          "format": "int64",
+          "title": "employee to register as an agent"
+        },
+        "limit": {
+          "type": "number",
+          "format": "double",
+          "title": "initial daily spending limit (\u003e= 0); 0 = no limit"
+        }
+      }
+    },
+    "v1CreateAgentResponse": {
+      "type": "object",
+      "properties": {
+        "actuary": {
+          "$ref": "#/definitions/v1ActuaryInfo"
+        }
+      }
     },
     "v1GetActuaryByEmployeeIDResponse": {
       "type": "object",

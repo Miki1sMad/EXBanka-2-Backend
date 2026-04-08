@@ -26,6 +26,7 @@ const (
 	ActuaryService_SetAgentLimit_FullMethodName          = "/actuary.v1.ActuaryService/SetAgentLimit"
 	ActuaryService_ResetAgentUsedLimit_FullMethodName    = "/actuary.v1.ActuaryService/ResetAgentUsedLimit"
 	ActuaryService_SetAgentNeedApproval_FullMethodName   = "/actuary.v1.ActuaryService/SetAgentNeedApproval"
+	ActuaryService_CreateAgent_FullMethodName            = "/actuary.v1.ActuaryService/CreateAgent"
 )
 
 // ActuaryServiceClient is the client API for ActuaryService service.
@@ -51,6 +52,9 @@ type ActuaryServiceClient interface {
 	// SetAgentNeedApproval — Supervisor only.
 	// Sets or clears the need_approval flag for the specified agent.
 	SetAgentNeedApproval(ctx context.Context, in *SetAgentNeedApprovalRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	// CreateAgent — Admin only.
+	// Creates an AGENT actuary record for the given employee with an optional initial limit.
+	CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*CreateAgentResponse, error)
 }
 
 type actuaryServiceClient struct {
@@ -121,6 +125,16 @@ func (c *actuaryServiceClient) SetAgentNeedApproval(ctx context.Context, in *Set
 	return out, nil
 }
 
+func (c *actuaryServiceClient) CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*CreateAgentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateAgentResponse)
+	err := c.cc.Invoke(ctx, ActuaryService_CreateAgent_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ActuaryServiceServer is the server API for ActuaryService service.
 // All implementations must embed UnimplementedActuaryServiceServer
 // for forward compatibility.
@@ -144,6 +158,9 @@ type ActuaryServiceServer interface {
 	// SetAgentNeedApproval — Supervisor only.
 	// Sets or clears the need_approval flag for the specified agent.
 	SetAgentNeedApproval(context.Context, *SetAgentNeedApprovalRequest) (*emptypb.Empty, error)
+	// CreateAgent — Admin only.
+	// Creates an AGENT actuary record for the given employee with an optional initial limit.
+	CreateAgent(context.Context, *CreateAgentRequest) (*CreateAgentResponse, error)
 	mustEmbedUnimplementedActuaryServiceServer()
 }
 
@@ -171,6 +188,9 @@ func (UnimplementedActuaryServiceServer) ResetAgentUsedLimit(context.Context, *R
 }
 func (UnimplementedActuaryServiceServer) SetAgentNeedApproval(context.Context, *SetAgentNeedApprovalRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method SetAgentNeedApproval not implemented")
+}
+func (UnimplementedActuaryServiceServer) CreateAgent(context.Context, *CreateAgentRequest) (*CreateAgentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAgent not implemented")
 }
 func (UnimplementedActuaryServiceServer) mustEmbedUnimplementedActuaryServiceServer() {}
 func (UnimplementedActuaryServiceServer) testEmbeddedByValue()                        {}
@@ -301,6 +321,24 @@ func _ActuaryService_SetAgentNeedApproval_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
+func _ActuaryService_CreateAgent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ActuaryServiceServer).CreateAgent(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ActuaryService_CreateAgent_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ActuaryServiceServer).CreateAgent(ctx, req.(*CreateAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ActuaryService_ServiceDesc is the grpc.ServiceDesc for ActuaryService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -331,6 +369,10 @@ var ActuaryService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetAgentNeedApproval",
 			Handler:    _ActuaryService_SetAgentNeedApproval_Handler,
+		},
+		{
+			MethodName: "CreateAgent",
+			Handler:    _ActuaryService_CreateAgent_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

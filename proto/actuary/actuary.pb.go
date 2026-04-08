@@ -514,6 +514,102 @@ func (x *GetAgentsResponse) GetAgents() []*AgentListItem {
 	return nil
 }
 
+type CreateAgentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EmployeeId    int64                  `protobuf:"varint,1,opt,name=employee_id,json=employeeId,proto3" json:"employee_id,omitempty"` // employee to register as an agent
+	Limit         float64                `protobuf:"fixed64,2,opt,name=limit,proto3" json:"limit,omitempty"`                            // initial daily spending limit (>= 0); 0 = no limit
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAgentRequest) Reset() {
+	*x = CreateAgentRequest{}
+	mi := &file_proto_actuary_actuary_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAgentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAgentRequest) ProtoMessage() {}
+
+func (x *CreateAgentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_actuary_actuary_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAgentRequest.ProtoReflect.Descriptor instead.
+func (*CreateAgentRequest) Descriptor() ([]byte, []int) {
+	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *CreateAgentRequest) GetEmployeeId() int64 {
+	if x != nil {
+		return x.EmployeeId
+	}
+	return 0
+}
+
+func (x *CreateAgentRequest) GetLimit() float64 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type CreateAgentResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Actuary       *ActuaryInfo           `protobuf:"bytes,1,opt,name=actuary,proto3" json:"actuary,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAgentResponse) Reset() {
+	*x = CreateAgentResponse{}
+	mi := &file_proto_actuary_actuary_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAgentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAgentResponse) ProtoMessage() {}
+
+func (x *CreateAgentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_actuary_actuary_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAgentResponse.ProtoReflect.Descriptor instead.
+func (*CreateAgentResponse) Descriptor() ([]byte, []int) {
+	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CreateAgentResponse) GetActuary() *ActuaryInfo {
+	if x != nil {
+		return x.Actuary
+	}
+	return nil
+}
+
 type SetAgentLimitRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EmployeeId    int64                  `protobuf:"varint,1,opt,name=employee_id,json=employeeId,proto3" json:"employee_id,omitempty"` // target agent identified by employee_id
@@ -524,7 +620,7 @@ type SetAgentLimitRequest struct {
 
 func (x *SetAgentLimitRequest) Reset() {
 	*x = SetAgentLimitRequest{}
-	mi := &file_proto_actuary_actuary_proto_msgTypes[7]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -536,7 +632,7 @@ func (x *SetAgentLimitRequest) String() string {
 func (*SetAgentLimitRequest) ProtoMessage() {}
 
 func (x *SetAgentLimitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_actuary_actuary_proto_msgTypes[7]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -549,7 +645,7 @@ func (x *SetAgentLimitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAgentLimitRequest.ProtoReflect.Descriptor instead.
 func (*SetAgentLimitRequest) Descriptor() ([]byte, []int) {
-	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{7}
+	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SetAgentLimitRequest) GetEmployeeId() int64 {
@@ -575,7 +671,7 @@ type ResetAgentUsedLimitRequest struct {
 
 func (x *ResetAgentUsedLimitRequest) Reset() {
 	*x = ResetAgentUsedLimitRequest{}
-	mi := &file_proto_actuary_actuary_proto_msgTypes[8]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -587,7 +683,7 @@ func (x *ResetAgentUsedLimitRequest) String() string {
 func (*ResetAgentUsedLimitRequest) ProtoMessage() {}
 
 func (x *ResetAgentUsedLimitRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_actuary_actuary_proto_msgTypes[8]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -600,7 +696,7 @@ func (x *ResetAgentUsedLimitRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetAgentUsedLimitRequest.ProtoReflect.Descriptor instead.
 func (*ResetAgentUsedLimitRequest) Descriptor() ([]byte, []int) {
-	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{8}
+	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ResetAgentUsedLimitRequest) GetEmployeeId() int64 {
@@ -620,7 +716,7 @@ type SetAgentNeedApprovalRequest struct {
 
 func (x *SetAgentNeedApprovalRequest) Reset() {
 	*x = SetAgentNeedApprovalRequest{}
-	mi := &file_proto_actuary_actuary_proto_msgTypes[9]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -632,7 +728,7 @@ func (x *SetAgentNeedApprovalRequest) String() string {
 func (*SetAgentNeedApprovalRequest) ProtoMessage() {}
 
 func (x *SetAgentNeedApprovalRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_actuary_actuary_proto_msgTypes[9]
+	mi := &file_proto_actuary_actuary_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -645,7 +741,7 @@ func (x *SetAgentNeedApprovalRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAgentNeedApprovalRequest.ProtoReflect.Descriptor instead.
 func (*SetAgentNeedApprovalRequest) Descriptor() ([]byte, []int) {
-	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{9}
+	return file_proto_actuary_actuary_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SetAgentNeedApprovalRequest) GetEmployeeId() int64 {
@@ -704,7 +800,13 @@ const file_proto_actuary_actuary_proto_rawDesc = "" +
 	"\tlast_name\x18\x03 \x01(\tR\blastName\x12\x1a\n" +
 	"\bposition\x18\x04 \x01(\tR\bposition\"F\n" +
 	"\x11GetAgentsResponse\x121\n" +
-	"\x06agents\x18\x01 \x03(\v2\x19.actuary.v1.AgentListItemR\x06agents\"M\n" +
+	"\x06agents\x18\x01 \x03(\v2\x19.actuary.v1.AgentListItemR\x06agents\"K\n" +
+	"\x12CreateAgentRequest\x12\x1f\n" +
+	"\vemployee_id\x18\x01 \x01(\x03R\n" +
+	"employeeId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x01R\x05limit\"H\n" +
+	"\x13CreateAgentResponse\x121\n" +
+	"\aactuary\x18\x01 \x01(\v2\x17.actuary.v1.ActuaryInfoR\aactuary\"M\n" +
 	"\x14SetAgentLimitRequest\x12\x1f\n" +
 	"\vemployee_id\x18\x01 \x01(\x03R\n" +
 	"employeeId\x12\x14\n" +
@@ -719,14 +821,15 @@ const file_proto_actuary_actuary_proto_rawDesc = "" +
 	"\vActuaryType\x12\x1c\n" +
 	"\x18ACTUARY_TYPE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17ACTUARY_TYPE_SUPERVISOR\x10\x01\x12\x16\n" +
-	"\x12ACTUARY_TYPE_AGENT\x10\x022\x90\x06\n" +
+	"\x12ACTUARY_TYPE_AGENT\x10\x022\xfc\x06\n" +
 	"\x0eActuaryService\x12e\n" +
 	"\x10GetMyActuaryInfo\x12\x16.google.protobuf.Empty\x1a$.actuary.v1.GetMyActuaryInfoResponse\"\x13\x82\xd3\xe4\x93\x02\r\x12\v/actuary/me\x12\x98\x01\n" +
 	"\x16GetActuaryByEmployeeID\x12).actuary.v1.GetActuaryByEmployeeIDRequest\x1a*.actuary.v1.GetActuaryByEmployeeIDResponse\"'\x82\xd3\xe4\x93\x02!\x12\x1f/actuary/employee/{employee_id}\x12a\n" +
 	"\tGetAgents\x12\x1c.actuary.v1.GetAgentsRequest\x1a\x1d.actuary.v1.GetAgentsResponse\"\x17\x82\xd3\xe4\x93\x02\x11\x12\x0f/actuary/agents\x12y\n" +
 	"\rSetAgentLimit\x12 .actuary.v1.SetAgentLimitRequest\x1a\x16.google.protobuf.Empty\".\x82\xd3\xe4\x93\x02(:\x01*2#/actuary/agents/{employee_id}/limit\x12\x8b\x01\n" +
 	"\x13ResetAgentUsedLimit\x12&.actuary.v1.ResetAgentUsedLimitRequest\x1a\x16.google.protobuf.Empty\"4\x82\xd3\xe4\x93\x02.:\x01*\")/actuary/agents/{employee_id}/reset-limit\x12\x8f\x01\n" +
-	"\x14SetAgentNeedApproval\x12'.actuary.v1.SetAgentNeedApprovalRequest\x1a\x16.google.protobuf.Empty\"6\x82\xd3\xe4\x93\x020:\x01*2+/actuary/agents/{employee_id}/need-approvalB'Z%banka-backend/proto/actuary;actuaryv1b\x06proto3"
+	"\x14SetAgentNeedApproval\x12'.actuary.v1.SetAgentNeedApprovalRequest\x1a\x16.google.protobuf.Empty\"6\x82\xd3\xe4\x93\x020:\x01*2+/actuary/agents/{employee_id}/need-approval\x12j\n" +
+	"\vCreateAgent\x12\x1e.actuary.v1.CreateAgentRequest\x1a\x1f.actuary.v1.CreateAgentResponse\"\x1a\x82\xd3\xe4\x93\x02\x14:\x01*\"\x0f/actuary/agentsB'Z%banka-backend/proto/actuary;actuaryv1b\x06proto3"
 
 var (
 	file_proto_actuary_actuary_proto_rawDescOnce sync.Once
@@ -741,7 +844,7 @@ func file_proto_actuary_actuary_proto_rawDescGZIP() []byte {
 }
 
 var file_proto_actuary_actuary_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_proto_actuary_actuary_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_proto_actuary_actuary_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_proto_actuary_actuary_proto_goTypes = []any{
 	(ActuaryType)(0),                       // 0: actuary.v1.ActuaryType
 	(*ActuaryInfo)(nil),                    // 1: actuary.v1.ActuaryInfo
@@ -751,33 +854,38 @@ var file_proto_actuary_actuary_proto_goTypes = []any{
 	(*GetActuaryByEmployeeIDResponse)(nil), // 5: actuary.v1.GetActuaryByEmployeeIDResponse
 	(*GetAgentsRequest)(nil),               // 6: actuary.v1.GetAgentsRequest
 	(*GetAgentsResponse)(nil),              // 7: actuary.v1.GetAgentsResponse
-	(*SetAgentLimitRequest)(nil),           // 8: actuary.v1.SetAgentLimitRequest
-	(*ResetAgentUsedLimitRequest)(nil),     // 9: actuary.v1.ResetAgentUsedLimitRequest
-	(*SetAgentNeedApprovalRequest)(nil),    // 10: actuary.v1.SetAgentNeedApprovalRequest
-	(*emptypb.Empty)(nil),                  // 11: google.protobuf.Empty
+	(*CreateAgentRequest)(nil),             // 8: actuary.v1.CreateAgentRequest
+	(*CreateAgentResponse)(nil),            // 9: actuary.v1.CreateAgentResponse
+	(*SetAgentLimitRequest)(nil),           // 10: actuary.v1.SetAgentLimitRequest
+	(*ResetAgentUsedLimitRequest)(nil),     // 11: actuary.v1.ResetAgentUsedLimitRequest
+	(*SetAgentNeedApprovalRequest)(nil),    // 12: actuary.v1.SetAgentNeedApprovalRequest
+	(*emptypb.Empty)(nil),                  // 13: google.protobuf.Empty
 }
 var file_proto_actuary_actuary_proto_depIdxs = []int32{
 	0,  // 0: actuary.v1.ActuaryInfo.actuary_type:type_name -> actuary.v1.ActuaryType
 	1,  // 1: actuary.v1.GetMyActuaryInfoResponse.actuary:type_name -> actuary.v1.ActuaryInfo
 	1,  // 2: actuary.v1.GetActuaryByEmployeeIDResponse.actuary:type_name -> actuary.v1.ActuaryInfo
 	2,  // 3: actuary.v1.GetAgentsResponse.agents:type_name -> actuary.v1.AgentListItem
-	11, // 4: actuary.v1.ActuaryService.GetMyActuaryInfo:input_type -> google.protobuf.Empty
-	4,  // 5: actuary.v1.ActuaryService.GetActuaryByEmployeeID:input_type -> actuary.v1.GetActuaryByEmployeeIDRequest
-	6,  // 6: actuary.v1.ActuaryService.GetAgents:input_type -> actuary.v1.GetAgentsRequest
-	8,  // 7: actuary.v1.ActuaryService.SetAgentLimit:input_type -> actuary.v1.SetAgentLimitRequest
-	9,  // 8: actuary.v1.ActuaryService.ResetAgentUsedLimit:input_type -> actuary.v1.ResetAgentUsedLimitRequest
-	10, // 9: actuary.v1.ActuaryService.SetAgentNeedApproval:input_type -> actuary.v1.SetAgentNeedApprovalRequest
-	3,  // 10: actuary.v1.ActuaryService.GetMyActuaryInfo:output_type -> actuary.v1.GetMyActuaryInfoResponse
-	5,  // 11: actuary.v1.ActuaryService.GetActuaryByEmployeeID:output_type -> actuary.v1.GetActuaryByEmployeeIDResponse
-	7,  // 12: actuary.v1.ActuaryService.GetAgents:output_type -> actuary.v1.GetAgentsResponse
-	11, // 13: actuary.v1.ActuaryService.SetAgentLimit:output_type -> google.protobuf.Empty
-	11, // 14: actuary.v1.ActuaryService.ResetAgentUsedLimit:output_type -> google.protobuf.Empty
-	11, // 15: actuary.v1.ActuaryService.SetAgentNeedApproval:output_type -> google.protobuf.Empty
-	10, // [10:16] is the sub-list for method output_type
-	4,  // [4:10] is the sub-list for method input_type
-	4,  // [4:4] is the sub-list for extension type_name
-	4,  // [4:4] is the sub-list for extension extendee
-	0,  // [0:4] is the sub-list for field type_name
+	1,  // 4: actuary.v1.CreateAgentResponse.actuary:type_name -> actuary.v1.ActuaryInfo
+	13, // 5: actuary.v1.ActuaryService.GetMyActuaryInfo:input_type -> google.protobuf.Empty
+	4,  // 6: actuary.v1.ActuaryService.GetActuaryByEmployeeID:input_type -> actuary.v1.GetActuaryByEmployeeIDRequest
+	6,  // 7: actuary.v1.ActuaryService.GetAgents:input_type -> actuary.v1.GetAgentsRequest
+	10, // 8: actuary.v1.ActuaryService.SetAgentLimit:input_type -> actuary.v1.SetAgentLimitRequest
+	11, // 9: actuary.v1.ActuaryService.ResetAgentUsedLimit:input_type -> actuary.v1.ResetAgentUsedLimitRequest
+	12, // 10: actuary.v1.ActuaryService.SetAgentNeedApproval:input_type -> actuary.v1.SetAgentNeedApprovalRequest
+	8,  // 11: actuary.v1.ActuaryService.CreateAgent:input_type -> actuary.v1.CreateAgentRequest
+	3,  // 12: actuary.v1.ActuaryService.GetMyActuaryInfo:output_type -> actuary.v1.GetMyActuaryInfoResponse
+	5,  // 13: actuary.v1.ActuaryService.GetActuaryByEmployeeID:output_type -> actuary.v1.GetActuaryByEmployeeIDResponse
+	7,  // 14: actuary.v1.ActuaryService.GetAgents:output_type -> actuary.v1.GetAgentsResponse
+	13, // 15: actuary.v1.ActuaryService.SetAgentLimit:output_type -> google.protobuf.Empty
+	13, // 16: actuary.v1.ActuaryService.ResetAgentUsedLimit:output_type -> google.protobuf.Empty
+	13, // 17: actuary.v1.ActuaryService.SetAgentNeedApproval:output_type -> google.protobuf.Empty
+	9,  // 18: actuary.v1.ActuaryService.CreateAgent:output_type -> actuary.v1.CreateAgentResponse
+	12, // [12:19] is the sub-list for method output_type
+	5,  // [5:12] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_proto_actuary_actuary_proto_init() }
@@ -791,7 +899,7 @@ func file_proto_actuary_actuary_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_actuary_actuary_proto_rawDesc), len(file_proto_actuary_actuary_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -206,3 +206,36 @@ func (h *ActuaryHandler) SetAgentNeedApproval(ctx context.Context, req *pb.SetAg
 	}
 	return &emptypb.Empty{}, nil
 }
+
+// ─── RPC: CreateAgent ─────────────────────────────────────────────────────────
+
+func (h *ActuaryHandler) CreateAgent(ctx context.Context, req *pb.CreateAgentRequest) (*pb.CreateAgentResponse, error) {
+	claims, ok := auth.ClaimsFromContext(ctx)
+	if !ok {
+		return nil, status.Error(codes.Unauthenticated, "nedostaju JWT claims")
+	}
+	if claims.UserType != "ADMIN" {
+		return nil, status.Error(codes.PermissionDenied, "pristup odbijen: zahteva ADMIN ulogu")
+	}
+	if req.EmployeeId == 0 {
+		return nil, status.Error(codes.InvalidArgument, "employee_id je obavezan")
+	}
+
+	a, err := h.service.CreateActuaryForEmployee(ctx, req.EmployeeId, domain.ActuaryTypeAgent)
+	if errors.Is(err, domain.ErrActuaryAlreadyExists) {
+		return nil, status.Error(codes.AlreadyExists, domain.ErrActuaryAlreadyExists.Error())
+	}
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "greška pri kreiranju agenta: %v", err)
+	}
+
+	if req.Limit > 0 {
+		limit := decimal.NewFromFloat(req.Limit)
+		a, err = h.service.SetAgentLimit(ctx, req.EmployeeId, limit)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "agent kreiran ali greška pri postavljanju limita: %v", err)
+		}
+	}
+
+	return &pb.CreateAgentResponse{Actuary: toProtoActuaryInfo(a)}, nil
+}

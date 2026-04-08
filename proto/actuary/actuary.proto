@@ -77,6 +77,19 @@ message GetAgentsResponse {
   repeated AgentListItem agents = 1;
 }
 
+// ─── CreateAgent ──────────────────────────────────────────────────────────────
+// Admin only. Creates an AGENT actuary record for the given employee,
+// optionally setting an initial daily spending limit.
+
+message CreateAgentRequest {
+  int64  employee_id = 1; // employee to register as an agent
+  double limit       = 2; // initial daily spending limit (>= 0); 0 = no limit
+}
+
+message CreateAgentResponse {
+  ActuaryInfo actuary = 1;
+}
+
 // ─── SetAgentLimit ────────────────────────────────────────────────────────────
 // Supervisor only. Updates the daily spending limit for a given agent.
 // Setting limit = 0 effectively disables spending (all orders require approval).
@@ -155,6 +168,15 @@ service ActuaryService {
   rpc SetAgentNeedApproval(SetAgentNeedApprovalRequest) returns (google.protobuf.Empty) {
     option (google.api.http) = {
       patch: "/actuary/agents/{employee_id}/need-approval"
+      body: "*"
+    };
+  }
+
+  // CreateAgent — Admin only.
+  // Creates an AGENT actuary record for the given employee with an optional initial limit.
+  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse) {
+    option (google.api.http) = {
+      post: "/actuary/agents"
       body: "*"
     };
   }
