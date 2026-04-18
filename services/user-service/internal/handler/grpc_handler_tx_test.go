@@ -290,6 +290,7 @@ func TestUpdateEmployee_DuplicateEmail(t *testing.T) {
 
 	existing := sqlc.GetEmployeeByIDRow{ID: 6, UserType: "EMPLOYEE", Email: "a@test.com", FirstName: "X", LastName: "Y", CreatedAt: time.Now()}
 	q.On("GetEmployeeByID", ctx, int64(6)).Return(existing, nil)
+	q.On("GetUserPermissions", ctx, int64(6)).Return([]string{}, nil)
 
 	smock.ExpectBegin()
 	smock.ExpectExec(regexp.QuoteMeta("UPDATE users")).
@@ -319,6 +320,7 @@ func TestUpdateEmployee_CommitError(t *testing.T) {
 
 	existing := sqlc.GetEmployeeByIDRow{ID: 7, UserType: "EMPLOYEE", Email: "u@test.com", FirstName: "G", LastName: "H", CreatedAt: time.Now()}
 	q.On("GetEmployeeByID", ctx, int64(7)).Return(existing, nil)
+	q.On("GetUserPermissions", ctx, int64(7)).Return([]string{}, nil)
 
 	smock.ExpectBegin()
 	smock.ExpectExec(regexp.QuoteMeta("UPDATE users")).

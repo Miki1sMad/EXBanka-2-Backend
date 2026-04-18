@@ -51,6 +51,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.11
+          install-mode: goinstall
           args: --timeout=5m
 
   generated:
@@ -62,9 +63,10 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install protoc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "28.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install protoc plugins
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
