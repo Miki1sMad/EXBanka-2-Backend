@@ -50,7 +50,7 @@ jobs:
           cache: false
       - uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.11
+          version: v2.10.0
           args: --timeout=5m
 
   generated:
@@ -62,15 +62,16 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install protoc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
+        uses: arduino/setup-protoc@v3
+        with:
+          version: "28.3"
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Install protoc plugins
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-          go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
-          go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+          go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.28.0
+          go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.28.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Install mockery
         run: go install github.com/vektra/mockery/v2@latest

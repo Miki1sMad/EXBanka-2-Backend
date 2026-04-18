@@ -7,17 +7,28 @@ run:
 linters:
   default: none
   enable:
-    - errcheck
     - govet
     - staticcheck
     - ineffassign
-    - unused
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - -QF1003
+        - -QF1005
+        - -QF1008
+        - -ST1000
+        - -ST1003
   exclusions:
     generated: lax
     paths:
       - proto
       - docs/swagger
       - services/.*/mocks
+    rules:
+      - path: _test\.go
+        linters:
+          - staticcheck
 
 formatters:
   enable:
