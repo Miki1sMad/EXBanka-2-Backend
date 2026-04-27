@@ -175,6 +175,12 @@ type Order struct {
 	Margin            bool
 	IsClient          bool // true = nalog kreirao klijent; engine koristi prodajni kurs za konverziju
 
+	// FundID, when non-nil, links this order to an investment fund.
+	// The AccountID on the order is then the fund's RSD account.
+	// After each BUY fill the engine upserts the security into fund_securities
+	// and deducts the RSD equivalent from investment_funds.liquid_assets.
+	FundID *int64
+
 	LastModified time.Time
 	CreatedAt    time.Time
 }
@@ -288,6 +294,11 @@ type CreateOrderRequest struct {
 	// ApprovedByOverride, when non-nil, overrides the default approved_by value stored in the DB.
 	// Used for system-declined orders (e.g., settlement date passed) to record the reason.
 	ApprovedByOverride *string
+
+	// FundID, when non-nil, links this order to an investment fund.
+	// The AccountID must be set to the fund's RSD account by the handler.
+	// The engine will update fund_securities and liquid_assets after each BUY fill.
+	FundID *int64
 }
 
 // ─── External service interfaces ─────────────────────────────────────────────

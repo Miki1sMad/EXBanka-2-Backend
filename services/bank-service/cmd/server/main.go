@@ -171,7 +171,6 @@ func main() {
 	actuaryRepo := repository.NewActuaryRepository(sqlDB)
 	actuaryService := service.NewActuaryService(actuaryRepo)
 	actuaryHandler := handler.NewActuaryHandler(actuaryService)
-	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, cfg.JWTAccessSecret)
 
 	exchangeProvider := repository.NewExchangeRateProvider(cfg.ExchangeRateAPIKey, cfg.ExchangeRateAPIBaseURL)
 	exchangeTransferRepo := repository.NewExchangeTransferRepository(db)
@@ -187,7 +186,12 @@ func main() {
 	// (subscriber) za event-driven okidanje LIMIT naloga.
 	tickBus := tradingworker.NewPriceTickBus()
 	marketDataProvider := tradingworker.NewListingMarketDataProvider(listingRepo)
-	tradingEngine := tradingworker.NewEngine(orderRepo, marketDataProvider, fundsManager, berzaService, db, 0, tickBus)
+
+	// investmentFundRepo is created early so the trading engine can reference it.
+	// The full service is wired below after other dependencies are ready.
+	investmentFundRepo := repository.NewInvestmentFundRepository(db)
+
+	tradingEngine := tradingworker.NewEngine(orderRepo, marketDataProvider, fundsManager, berzaService, db, 0, investmentFundRepo, tickBus)
 
 	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, tradingService, userClient, accountPublisher)
 
@@ -207,6 +211,25 @@ func main() {
 	myOrdersHandler := handler.NewMyOrdersHandler(tradingService, cfg.JWTAccessSecret)
 	tradingFXHandler := handler.NewTradingFXHandler(tradingService, accountService, exchangeService, cfg.JWTAccessSecret)
 	fundHandler := handler.NewFundHandler(db, exchangeService, cfg.JWTAccessSecret)
+
+	// ── InvestmentFundHandler — Discovery, Details, Create, FundOrder (Celina 4) ─
+	investmentFundService := service.NewInvestmentFundService(
+		investmentFundRepo,
+		listingService,
+		exchangeService,
+		accountService,
+		currencyRepo,
+	)
+	investmentFundHandler := handler.NewInvestmentFundHandler(
+		investmentFundService,
+		tradingService,
+		listingService,
+		exchangeService,
+		cfg.JWTAccessSecret,
+	)
+
+	// InternalActuaryHandler proširen za prenos menadžmenta fondova
+	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret)
 
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
 	// Sve rute zahtevaju validan JWT access token osim gRPC health check-a.
@@ -279,6 +302,9 @@ func main() {
 	httpMux.Handle("/bank/tax/", taxHandler)                                     // GET /bank/tax/users, POST /bank/tax/calculate
 	httpMux.Handle("/bank/funds/", fundHandler)                                  // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
 	httpMux.Handle("/bank/funds", fundHandler)                                   // GET /bank/funds (without trailing slash)
+	httpMux.Handle("/bank/investment-funds/orders", investmentFundHandler)        // POST /bank/investment-funds/orders — nalog za kupovinu za fond
+	httpMux.Handle("/bank/investment-funds/", investmentFundHandler)             // GET /bank/investment-funds/{id} — detalj fonda
+	httpMux.Handle("/bank/investment-funds", investmentFundHandler)              // GET (discovery) + POST (kreiranje) fonda
 	httpMux.Handle("/", gwMux)                                                   // sve ostalo → gRPC-Gateway
 
 	gatewaySrv := &http.Server{

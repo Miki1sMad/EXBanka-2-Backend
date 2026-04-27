@@ -14,13 +14,16 @@ import (
 // InternalActuaryHandler vrši HTTP operacije kreiranja i brisanja aktuar zapisa.
 // Poziva ga isključivo user-service kada zaposleni dobije ili izgubi SUPERVISOR/AGENT permisiju.
 // Autentifikacija: JWT access token sa user_type == "ADMIN".
+// Prošireno (Celina 4): pri brisanju SUPERVISOR-a, menadžment fondova se automatski
+// prebacuje na admina koji vrši operaciju.
 type InternalActuaryHandler struct {
-	service   domain.ActuaryService
-	jwtSecret string
+	service     domain.ActuaryService
+	fundService domain.InvestmentFundService
+	jwtSecret   string
 }
 
-func NewInternalActuaryHandler(service domain.ActuaryService, jwtSecret string) *InternalActuaryHandler {
-	return &InternalActuaryHandler{service: service, jwtSecret: jwtSecret}
+func NewInternalActuaryHandler(service domain.ActuaryService, fundService domain.InvestmentFundService, jwtSecret string) *InternalActuaryHandler {
+	return &InternalActuaryHandler{service: service, fundService: fundService, jwtSecret: jwtSecret}
 }
 
 // requireAdmin validates the Bearer token and checks user_type == "ADMIN".
@@ -104,10 +107,28 @@ func (h *InternalActuaryHandler) handleDelete(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Utvrdi da li je zaposleni supervizor pre brisanja — ako jeste,
+	// menadžment fondova mora preći na admina koji vrši operaciju.
+	existing, lookupErr := h.service.GetActuaryByEmployeeID(r.Context(), employeeID)
+	isSupervisorBeingRemoved := lookupErr == nil && existing.ActuaryType == domain.ActuaryTypeSupervisor
+
 	if err := h.service.DeleteActuaryForEmployee(r.Context(), employeeID); err != nil {
 		log.Printf("[internal-actuary] delete employee_id=%d: %v", employeeID, err)
 		http.Error(w, `{"error":"failed to delete actuary"}`, http.StatusInternalServerError)
 		return
+	}
+
+	// Ako je obrisan supervizor, prebaci fondove na admina iz JWT-a.
+	if isSupervisorBeingRemoved && h.fundService != nil {
+		claims, ok := h.requireAdmin(r)
+		if ok {
+			adminID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+			if parseErr == nil {
+				if transferErr := h.fundService.TransferManagerFunds(r.Context(), employeeID, adminID); transferErr != nil {
+					log.Printf("[internal-actuary] prenos fondova employee_id=%d -> admin=%d: %v", employeeID, adminID, transferErr)
+				}
+			}
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
