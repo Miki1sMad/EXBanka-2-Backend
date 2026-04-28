@@ -9,6 +9,7 @@ package handler
 //   POST /bank/investment-funds/orders           — Kreiranje naloga za kupovinu hartija za fond (samo supervizori)
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -18,35 +19,136 @@ import (
 
 	"banka-backend/services/bank-service/internal/domain"
 	"banka-backend/services/bank-service/internal/trading"
+	"banka-backend/services/bank-service/internal/transport"
 	auth "banka-backend/shared/auth"
 
 	"github.com/shopspring/decimal"
+	"google.golang.org/grpc/metadata"
 )
 
 // InvestmentFundHandler opslužuje sve /bank/investment-funds/* rute.
 type InvestmentFundHandler struct {
 	service         domain.InvestmentFundService
+	fundRepo        domain.InvestmentFundRepository
 	tradingService  trading.TradingService
 	listingService  domain.ListingService
 	exchangeService domain.ExchangeService
+	userClient      *transport.UserServiceClient
 	jwtSecret       string
 }
 
 // NewInvestmentFundHandler kreira handler sa svim zavisnostima.
 func NewInvestmentFundHandler(
 	service domain.InvestmentFundService,
+	fundRepo domain.InvestmentFundRepository,
 	tradingService trading.TradingService,
 	listingService domain.ListingService,
 	exchangeService domain.ExchangeService,
+	userClient *transport.UserServiceClient,
 	jwtSecret string,
 ) *InvestmentFundHandler {
 	return &InvestmentFundHandler{
 		service:         service,
+		fundRepo:        fundRepo,
 		tradingService:  tradingService,
 		listingService:  listingService,
 		exchangeService: exchangeService,
+		userClient:      userClient,
 		jwtSecret:       jwtSecret,
 	}
+}
+
+// resolveManagerName vraća "Ime Prezime" za zadati employee ID; ako lookup pukne, vraća "".
+// Prosleđuje Authorization header iz HTTP zahteva kao gRPC metadata da bi user-service
+// videlo isti JWT kao i bank-service (auth interceptor user-service-a).
+func (h *InvestmentFundHandler) resolveManagerName(r *http.Request, managerID int64) string {
+	if h.userClient == nil || managerID == 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	if authHdr := r.Header.Get("Authorization"); authHdr != "" {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", authHdr))
+	}
+	info, err := h.userClient.GetEmployeeInfo(ctx, managerID)
+	if err != nil || info == nil {
+		return ""
+	}
+	return strings.TrimSpace(info.FirstName + " " + info.LastName)
+}
+
+// BankAccountsHandler je tanki HTTP handler — vraća RSD račune banke (vlasnik_id=2)
+// koji nisu fond-namenski. Koriste ih supervizori pri "investiranju u ime banke" i pri
+// kupovini hartija u ime banke.
+//
+// Mapped to: GET /bank/bank-accounts (samo SUPERVISOR / ADMIN).
+func (h *InvestmentFundHandler) BankAccountsHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	claims, err := auth.VerifyToken(strings.TrimPrefix(authHeader, "Bearer "), h.jwtSecret)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	if !isSupervisorPermission(claims) {
+		writeJSONError(w, http.StatusForbidden, "samo supervizori i admini mogu listati račune banke")
+		return
+	}
+
+	items, err := h.fundRepo.ListBankRSDAccounts(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu računa banke")
+		return
+	}
+
+	type bankAccountResp struct {
+		ID                  string  `json:"id"`
+		BrojRacuna          string  `json:"brojRacuna"`
+		NazivRacuna         string  `json:"nazivRacuna"`
+		ValutaOznaka        string  `json:"valutaOznaka"`
+		StanjeRacuna        float64 `json:"stanjeRacuna"`
+		RezervisanaSredstva float64 `json:"rezervisanaSredstva"`
+		RaspolozivoStanje   float64 `json:"raspolozivoStanje"`
+	}
+	resp := make([]bankAccountResp, 0, len(items))
+	for _, it := range items {
+		resp = append(resp, bankAccountResp{
+			ID:                  strconv.FormatInt(it.ID, 10),
+			BrojRacuna:          it.BrojRacuna,
+			NazivRacuna:         it.NazivRacuna,
+			ValutaOznaka:        "RSD",
+			StanjeRacuna:        it.StanjeRacuna,
+			RezervisanaSredstva: it.RezervovanaSredstva,
+			RaspolozivoStanje:   it.RaspolozivoStanje,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"accounts": resp})
+}
+
+// resolveAccountNumber vraća broj_racuna za fund.AccountID; ako lookup pukne, vraća "".
+func (h *InvestmentFundHandler) resolveAccountNumber(r *http.Request, accountID int64) string {
+	if h.fundRepo == nil || accountID == 0 {
+		return ""
+	}
+	num, err := h.fundRepo.GetAccountNumber(r.Context(), accountID)
+	if err != nil {
+		return ""
+	}
+	return num
 }
 
 // ServeHTTP dispečuje zahteve na odgovarajuće sub-handlere.
@@ -105,6 +207,7 @@ type fundDiscoveryItem struct {
 	Description         string  `json:"description"`
 	FundValueRSD        float64 `json:"fundValueRsd"`
 	Profit              float64 `json:"profit"`
+	LiquidAssets        float64 `json:"liquidAssets"`
 	MinimumContribution float64 `json:"minimumContribution"`
 	ManagerID           string  `json:"managerId"`
 	CreatedAt           string  `json:"createdAt"`
@@ -142,6 +245,7 @@ func (h *InvestmentFundHandler) discoveryList(w http.ResponseWriter, r *http.Req
 			Description:         item.Description,
 			FundValueRSD:        item.FundValueRSD,
 			Profit:              item.Profit,
+			LiquidAssets:        item.LiquidAssets,
 			MinimumContribution: item.MinimumContribution,
 			ManagerID:           strconv.FormatInt(item.ManagerID, 10),
 			CreatedAt:           item.CreatedAt.Format(time.RFC3339),
@@ -162,8 +266,10 @@ type fundDetailsResponse struct {
 	Profit              float64            `json:"profit"`
 	MinimumContribution float64            `json:"minimumContribution"`
 	ManagerID           string             `json:"managerId"`
+	ManagerName         string             `json:"managerName"`
 	LiquidAssets        float64            `json:"liquidAssets"`
 	AccountID           string             `json:"accountId"`
+	AccountNumber       string             `json:"accountNumber"`
 	CreatedAt           string             `json:"createdAt"`
 	Securities          []securityItemResp `json:"securities"`
 }
@@ -222,8 +328,10 @@ func (h *InvestmentFundHandler) fundDetails(w http.ResponseWriter, r *http.Reque
 		Profit:              details.Profit,
 		MinimumContribution: details.MinimumContribution,
 		ManagerID:           strconv.FormatInt(details.ManagerID, 10),
+		ManagerName:         h.resolveManagerName(r, details.ManagerID),
 		LiquidAssets:        details.LiquidAssets,
 		AccountID:           strconv.FormatInt(details.AccountID, 10),
+		AccountNumber:       h.resolveAccountNumber(r, details.AccountID),
 		CreatedAt:           details.CreatedAt.Format(time.RFC3339),
 		Securities:          secs,
 	})
@@ -243,7 +351,9 @@ type createInvestmentFundResponse struct {
 	Description         string  `json:"description"`
 	MinimumContribution float64 `json:"minimumContribution"`
 	ManagerID           string  `json:"managerId"`
+	ManagerName         string  `json:"managerName"`
 	AccountID           string  `json:"accountId"`
+	AccountNumber       string  `json:"accountNumber"`
 	CreatedAt           string  `json:"createdAt"`
 }
 
@@ -292,7 +402,9 @@ func (h *InvestmentFundHandler) createFund(w http.ResponseWriter, r *http.Reques
 		Description:         fund.Description,
 		MinimumContribution: fund.MinimumContribution,
 		ManagerID:           strconv.FormatInt(fund.ManagerID, 10),
+		ManagerName:         h.resolveManagerName(r, fund.ManagerID),
 		AccountID:           strconv.FormatInt(fund.AccountID, 10),
+		AccountNumber:       h.resolveAccountNumber(r, fund.AccountID),
 		CreatedAt:           fund.CreatedAt.Format(time.RFC3339),
 	})
 }

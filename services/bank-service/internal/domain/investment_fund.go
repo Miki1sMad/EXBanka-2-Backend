@@ -97,6 +97,16 @@ type FundSecurityDetail struct {
 	InitialMarginCost float64 // za prikaz na detalju (spec: initialMarginCost)
 }
 
+// BankAccountItem je projekcija jednog RSD računa banke (vlasnik_id=2 / trezor).
+type BankAccountItem struct {
+	ID                  int64
+	BrojRacuna          string
+	NazivRacuna         string
+	StanjeRacuna        float64
+	RezervovanaSredstva float64
+	RaspolozivoStanje   float64
+}
+
 // FundDetails je pun prikaz fonda za GET /bank/investment-funds/{id}.
 type FundDetails struct {
 	InvestmentFund
@@ -114,6 +124,14 @@ type InvestmentFundRepository interface {
 
 	// GetByID vraća fond po ID-u; ErrFundNotFound ako ne postoji.
 	GetByID(ctx context.Context, id int64) (*InvestmentFund, error)
+
+	// GetAccountNumber vraća broj_racuna (npr. "666-0001-12-...") za dati surogat PK računa.
+	GetAccountNumber(ctx context.Context, accountID int64) (string, error)
+
+	// ListBankRSDAccounts vraća sve aktivne RSD račune koje banka (trezor, vlasnik_id=2) drži,
+	// ISKLJUČUJUĆI račune koji su namenski povezani sa investicionim fondovima.
+	// Koristi supervizor pri "Investiraj u ime banke" i pri kupovini hartija u ime banke.
+	ListBankRSDAccounts(ctx context.Context) ([]BankAccountItem, error)
 
 	// List vraća sve fondove (bez filtriranja — filtriranje je u servisnom sloju).
 	List(ctx context.Context) ([]InvestmentFund, error)

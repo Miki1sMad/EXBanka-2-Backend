@@ -222,14 +222,23 @@ func main() {
 	)
 	investmentFundHandler := handler.NewInvestmentFundHandler(
 		investmentFundService,
+		investmentFundRepo,
 		tradingService,
 		listingService,
 		exchangeService,
+		userClient,
 		cfg.JWTAccessSecret,
 	)
 
 	// InternalActuaryHandler proširen za prenos menadžmenta fondova
 	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret)
+
+	// ── OTC (Faza 2) ─────────────────────────────────────────────────────────
+	// PaymentService igra ulogu OTCPaymentPort — premija ide kroz auditovanu
+	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
+	otcRepo := repository.NewOTCRepository(db)
+	otcService := service.NewOTCService(db, otcRepo, paymentService)
+	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret)
 
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
 	// Sve rute zahtevaju validan JWT access token osim gRPC health check-a.
@@ -302,9 +311,15 @@ func main() {
 	httpMux.Handle("/bank/tax/", taxHandler)                                     // GET /bank/tax/users, POST /bank/tax/calculate
 	httpMux.Handle("/bank/funds/", fundHandler)                                  // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
 	httpMux.Handle("/bank/funds", fundHandler)                                   // GET /bank/funds (without trailing slash)
+	httpMux.Handle("GET /bank/bank-accounts", http.HandlerFunc(investmentFundHandler.BankAccountsHandler)) // GET /bank/bank-accounts — RSD računi banke (supervizor/admin)
 	httpMux.Handle("/bank/investment-funds/orders", investmentFundHandler)        // POST /bank/investment-funds/orders — nalog za kupovinu za fond
 	httpMux.Handle("/bank/investment-funds/", investmentFundHandler)             // GET /bank/investment-funds/{id} — detalj fonda
 	httpMux.Handle("/bank/investment-funds", investmentFundHandler)              // GET (discovery) + POST (kreiranje) fonda
+	// OTC (Faza 2) — Faza 2 spec: /api/otc/offers...
+	httpMux.Handle("/api/otc/marketplace", otcHandler) // GET — public_shares marketplace (Faza 2)
+	httpMux.Handle("/api/otc/offers", otcHandler)      // POST (create) + GET (list)
+	httpMux.Handle("/api/otc/offers/", otcHandler)     // GET /{id}, PATCH /{id}/{counter|accept|decline}
+
 	httpMux.Handle("/", gwMux)                                                   // sve ostalo → gRPC-Gateway
 
 	gatewaySrv := &http.Server{
