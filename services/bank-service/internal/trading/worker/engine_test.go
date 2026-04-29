@@ -132,13 +132,13 @@ func (e *stubExchangeChecker) IsExchangeOpen(ctx context.Context, exchangeID int
 }
 
 func newTestEngine(orders trading.OrderRepository, market MarketDataProvider, exchange ExchangeChecker) *Engine {
-	return NewEngine(orders, market, &stubFundsManagerEngine{}, exchange, nil, 100*time.Millisecond, nil)
+	return NewEngine(orders, market, &stubFundsManagerEngine{}, exchange, nil, 100*time.Millisecond, nil, nil)
 }
 
 // ─── NewEngine ────────────────────────────────────────────────────────────────
 
 func TestNewEngine_NotNil(t *testing.T) {
-	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, nil)
+	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, nil, nil)
 	if e == nil {
 		t.Error("NewEngine should return non-nil engine")
 	}
@@ -146,7 +146,7 @@ func TestNewEngine_NotNil(t *testing.T) {
 
 func TestNewEngine_DefaultPollInterval(t *testing.T) {
 	// Zero poll interval should fall back to defaultPollInterval
-	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, nil)
+	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, nil, nil)
 	if e.pollInterval != defaultPollInterval {
 		t.Errorf("expected defaultPollInterval %s, got %s", defaultPollInterval, e.pollInterval)
 	}
@@ -154,7 +154,7 @@ func TestNewEngine_DefaultPollInterval(t *testing.T) {
 
 func TestNewEngine_CustomPollInterval(t *testing.T) {
 	interval := 2 * time.Second
-	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, interval, nil)
+	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, interval, nil, nil)
 	if e.pollInterval != interval {
 		t.Errorf("expected %s, got %s", interval, e.pollInterval)
 	}
@@ -162,7 +162,7 @@ func TestNewEngine_CustomPollInterval(t *testing.T) {
 
 func TestNewEngine_WithTickBus(t *testing.T) {
 	bus := NewPriceTickBus()
-	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, bus)
+	e := NewEngine(&stubOrderRepo{}, &stubMarketProvider{}, &stubFundsManagerEngine{}, nil, nil, 0, nil, bus)
 	if e.tickBus != bus {
 		t.Error("tickBus should be set")
 	}

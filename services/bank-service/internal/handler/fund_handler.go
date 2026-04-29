@@ -280,18 +280,53 @@ func (h *FundHandler) invest(w http.ResponseWriter, r *http.Request, claims *aut
 		return
 	}
 
-	// Deduct from account
-	h.db.WithContext(ctx).Exec(`
-		UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?
-	`, req.Amount, accountID)
+	// Dohvati account_id fonda (RSD račun fonda).
+	var fundAccountID int64
+	h.db.WithContext(ctx).Raw(`
+		SELECT COALESCE(account_id, 0) FROM core_banking.investment_funds WHERE id = ?
+	`, fundID).Scan(&fundAccountID)
 
-	// Upsert fund position
-	h.db.WithContext(ctx).Exec(`
-		INSERT INTO core_banking.fund_positions (fund_id, user_id, account_id, invested_rsd)
-		VALUES (?, ?, ?, ?)
-		ON CONFLICT (fund_id, user_id)
-		DO UPDATE SET invested_rsd = fund_positions.invested_rsd + EXCLUDED.invested_rsd
-	`, fundID, userID, accountID, amountRSD)
+	// Atomično: skini sa klijentovog računa, knjiži na fond račun, uvećaj liquid_assets,
+	// upsert fund_positions. Bilo koja greška vraća rollback.
+	txErr := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. Skini sa klijentovog računa (u valuti računa).
+		if err := tx.Exec(`
+			UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?
+		`, req.Amount, accountID).Error; err != nil {
+			return err
+		}
+
+		// 2. Knjiži na RSD račun fonda (u RSD).
+		if fundAccountID > 0 {
+			if err := tx.Exec(`
+				UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
+			`, amountRSD, fundAccountID).Error; err != nil {
+				return err
+			}
+		}
+
+		// 3. Uvećaj liquid_assets fonda (u RSD).
+		if err := tx.Exec(`
+			UPDATE core_banking.investment_funds SET liquid_assets = liquid_assets + ? WHERE id = ?
+		`, amountRSD, fundID).Error; err != nil {
+			return err
+		}
+
+		// 4. Upsert klijentske pozicije.
+		if err := tx.Exec(`
+			INSERT INTO core_banking.fund_positions (fund_id, user_id, account_id, invested_rsd)
+			VALUES (?, ?, ?, ?)
+			ON CONFLICT (fund_id, user_id)
+			DO UPDATE SET invested_rsd = fund_positions.invested_rsd + EXCLUDED.invested_rsd
+		`, fundID, userID, accountID, amountRSD).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+	if txErr != nil {
+		writeJSONError(w, http.StatusInternalServerError, "greška pri uplati u fond: "+txErr.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"message":   "Investicija je uspešno obavljena.",

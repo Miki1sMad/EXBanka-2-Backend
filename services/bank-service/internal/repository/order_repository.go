@@ -34,6 +34,7 @@ type orderModel struct {
 	AllOrNone         bool      `gorm:"column:all_or_none"`
 	Margin            bool      `gorm:"column:margin"`
 	IsClient          bool      `gorm:"column:is_client"`
+	FundID            *int64    `gorm:"column:fund_id"`
 	LastModified      time.Time `gorm:"column:last_modified"`
 	CreatedAt         time.Time `gorm:"column:created_at"`
 }
@@ -58,6 +59,7 @@ func (m orderModel) toDomain() trading.Order {
 		AllOrNone:         m.AllOrNone,
 		Margin:            m.Margin,
 		IsClient:          m.IsClient,
+		FundID:            m.FundID,
 		LastModified:      m.LastModified,
 		CreatedAt:         m.CreatedAt,
 	}
@@ -171,6 +173,7 @@ func (r *orderRepository) Create(ctx context.Context, req trading.CreateOrderReq
 		AllOrNone:         req.AllOrNone,
 		Margin:            req.Margin,
 		IsClient:          req.IsClient,
+		FundID:            req.FundID,
 		LastModified:      now,
 	}
 	if req.ApprovedByOverride != nil {
