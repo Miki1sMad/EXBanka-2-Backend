@@ -56,8 +56,8 @@ func (h *OTCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := strings.TrimPrefix(r.URL.Path, "/api/otc/offers")
-	switch {
-	case path == "" || path == "/":
+	switch path {
+	case "", "/":
 		switch r.Method {
 		case http.MethodPost:
 			h.handleCreate(w, r, callerID)
