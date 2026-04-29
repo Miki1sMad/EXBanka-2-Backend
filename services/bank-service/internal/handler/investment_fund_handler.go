@@ -414,7 +414,7 @@ func (h *InvestmentFundHandler) createFund(w http.ResponseWriter, r *http.Reques
 type createFundOrderRequest struct {
 	FundID       int64   `json:"fund_id"`
 	ListingID    int64   `json:"listing_id"`
-	OrderType    string  `json:"order_type"`    // MARKET | LIMIT | STOP | STOP_LIMIT
+	OrderType    string  `json:"order_type"` // MARKET | LIMIT | STOP | STOP_LIMIT
 	Quantity     int32   `json:"quantity"`
 	ContractSize int32   `json:"contract_size"`
 	PricePerUnit *string `json:"price_per_unit"` // za LIMIT/STOP_LIMIT; nil inače

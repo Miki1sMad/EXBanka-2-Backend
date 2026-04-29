@@ -295,32 +295,32 @@ func main() {
 
 	// Kombinovani HTTP mux: gRPC-Gateway + direktni HTTP handleri.
 	httpMux := http.NewServeMux()
-	httpMux.Handle("GET /bank/admin/exchanges/test-mode", marketModeHTTPHandler) // GET /bank/admin/exchanges/test-mode
-	httpMux.Handle("/bank/payments/", receiptHandler)                            // GET /bank/payments/{id}/receipt
-	httpMux.Handle("/bank/client/exchange-transfers", exchangeTransferHandler)   // POST /bank/client/exchange-transfers
-	httpMux.Handle("/bank/exchange-rates", exchangeRateHandler)                  // GET /bank/exchange-rates[?from=X&to=Y&amount=Z]
-	httpMux.Handle("/bank/exchange-rates/execute", exchangeRateHandler)          // POST /bank/exchange-rates/execute
-	httpMux.Handle("POST /bank/cards/request", karticaRequestHandler)            // POST /bank/cards/request (Flow 2 Korak 1)
-	httpMux.Handle("POST /bank/cards/confirm", karticaRequestHandler)            // POST /bank/cards/confirm (Flow 2 Korak 2)
-	httpMux.Handle("GET /bank/cards/my", klientKarticeHandler)                   // GET  /bank/cards/my (klijentske kartice)
-	httpMux.Handle("PATCH /bank/cards/{id}/block", klientKarticeHandler)         // PATCH /bank/cards/{id}/block (blokiranje)
-	httpMux.Handle("/bank/internal/actuary/", internalActuaryHandler)            // POST/DELETE — user-service interni pozivi
-	httpMux.Handle("GET /bank/trading/my-orders", myOrdersHandler)               // GET /bank/trading/my-orders — caller's own orders (all roles)
-	httpMux.Handle("POST /bank/trading/fx-breakdown", tradingFXHandler)          // POST /bank/trading/fx-breakdown — FX transparency za klijente
-	httpMux.Handle("/bank/portfolio/", portfolioHandler)                         // GET /bank/portfolio/my, POST /bank/portfolio/publish, POST /bank/portfolio/exercise
-	httpMux.Handle("/bank/tax/", taxHandler)                                     // GET /bank/tax/users, POST /bank/tax/calculate
-	httpMux.Handle("/bank/funds/", fundHandler)                                  // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
-	httpMux.Handle("/bank/funds", fundHandler)                                   // GET /bank/funds (without trailing slash)
+	httpMux.Handle("GET /bank/admin/exchanges/test-mode", marketModeHTTPHandler)                           // GET /bank/admin/exchanges/test-mode
+	httpMux.Handle("/bank/payments/", receiptHandler)                                                      // GET /bank/payments/{id}/receipt
+	httpMux.Handle("/bank/client/exchange-transfers", exchangeTransferHandler)                             // POST /bank/client/exchange-transfers
+	httpMux.Handle("/bank/exchange-rates", exchangeRateHandler)                                            // GET /bank/exchange-rates[?from=X&to=Y&amount=Z]
+	httpMux.Handle("/bank/exchange-rates/execute", exchangeRateHandler)                                    // POST /bank/exchange-rates/execute
+	httpMux.Handle("POST /bank/cards/request", karticaRequestHandler)                                      // POST /bank/cards/request (Flow 2 Korak 1)
+	httpMux.Handle("POST /bank/cards/confirm", karticaRequestHandler)                                      // POST /bank/cards/confirm (Flow 2 Korak 2)
+	httpMux.Handle("GET /bank/cards/my", klientKarticeHandler)                                             // GET  /bank/cards/my (klijentske kartice)
+	httpMux.Handle("PATCH /bank/cards/{id}/block", klientKarticeHandler)                                   // PATCH /bank/cards/{id}/block (blokiranje)
+	httpMux.Handle("/bank/internal/actuary/", internalActuaryHandler)                                      // POST/DELETE — user-service interni pozivi
+	httpMux.Handle("GET /bank/trading/my-orders", myOrdersHandler)                                         // GET /bank/trading/my-orders — caller's own orders (all roles)
+	httpMux.Handle("POST /bank/trading/fx-breakdown", tradingFXHandler)                                    // POST /bank/trading/fx-breakdown — FX transparency za klijente
+	httpMux.Handle("/bank/portfolio/", portfolioHandler)                                                   // GET /bank/portfolio/my, POST /bank/portfolio/publish, POST /bank/portfolio/exercise
+	httpMux.Handle("/bank/tax/", taxHandler)                                                               // GET /bank/tax/users, POST /bank/tax/calculate
+	httpMux.Handle("/bank/funds/", fundHandler)                                                            // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
+	httpMux.Handle("/bank/funds", fundHandler)                                                             // GET /bank/funds (without trailing slash)
 	httpMux.Handle("GET /bank/bank-accounts", http.HandlerFunc(investmentFundHandler.BankAccountsHandler)) // GET /bank/bank-accounts — RSD računi banke (supervizor/admin)
-	httpMux.Handle("/bank/investment-funds/orders", investmentFundHandler)        // POST /bank/investment-funds/orders — nalog za kupovinu za fond
-	httpMux.Handle("/bank/investment-funds/", investmentFundHandler)             // GET /bank/investment-funds/{id} — detalj fonda
-	httpMux.Handle("/bank/investment-funds", investmentFundHandler)              // GET (discovery) + POST (kreiranje) fonda
+	httpMux.Handle("/bank/investment-funds/orders", investmentFundHandler)                                 // POST /bank/investment-funds/orders — nalog za kupovinu za fond
+	httpMux.Handle("/bank/investment-funds/", investmentFundHandler)                                       // GET /bank/investment-funds/{id} — detalj fonda
+	httpMux.Handle("/bank/investment-funds", investmentFundHandler)                                        // GET (discovery) + POST (kreiranje) fonda
 	// OTC (Faza 2) — Faza 2 spec: /api/otc/offers...
 	httpMux.Handle("/api/otc/marketplace", otcHandler) // GET — public_shares marketplace (Faza 2)
 	httpMux.Handle("/api/otc/offers", otcHandler)      // POST (create) + GET (list)
 	httpMux.Handle("/api/otc/offers/", otcHandler)     // GET /{id}, PATCH /{id}/{counter|accept|decline}
 
-	httpMux.Handle("/", gwMux)                                                   // sve ostalo → gRPC-Gateway
+	httpMux.Handle("/", gwMux) // sve ostalo → gRPC-Gateway
 
 	gatewaySrv := &http.Server{
 		Addr:         cfg.HTTPAddr,

@@ -154,22 +154,22 @@ type acceptOfferReq struct {
 }
 
 type offerDTO struct {
-	ID              int64    `json:"id"`
-	ListingID       int64    `json:"listingId"`
-	Ticker          string   `json:"ticker,omitempty"`
-	StockName       string   `json:"stockName,omitempty"`
-	Exchange        string   `json:"exchange,omitempty"`
-	SellerID        int64    `json:"sellerId"`
-	BuyerID         int64    `json:"buyerId"`
-	BuyerAccountID  int64    `json:"buyerAccountId"`
-	SellerAccountID *int64   `json:"sellerAccountId,omitempty"`
-	Amount          int32    `json:"amount"`
-	PricePerStock   float64  `json:"pricePerStock"`
-	Premium         float64  `json:"premium"`
-	SettlementDate  string   `json:"settlementDate"`
-	Status          string   `json:"status"`
-	LastModified    string   `json:"lastModified"`
-	ModifiedBy      int64    `json:"modifiedBy"`
+	ID              int64   `json:"id"`
+	ListingID       int64   `json:"listingId"`
+	Ticker          string  `json:"ticker,omitempty"`
+	StockName       string  `json:"stockName,omitempty"`
+	Exchange        string  `json:"exchange,omitempty"`
+	SellerID        int64   `json:"sellerId"`
+	BuyerID         int64   `json:"buyerId"`
+	BuyerAccountID  int64   `json:"buyerAccountId"`
+	SellerAccountID *int64  `json:"sellerAccountId,omitempty"`
+	Amount          int32   `json:"amount"`
+	PricePerStock   float64 `json:"pricePerStock"`
+	Premium         float64 `json:"premium"`
+	SettlementDate  string  `json:"settlementDate"`
+	Status          string  `json:"status"`
+	LastModified    string  `json:"lastModified"`
+	ModifiedBy      int64   `json:"modifiedBy"`
 
 	// Vizuelni indikatori (Faza 2): odstupanje cene + boja + needsReview.
 	MarketPriceUSD    float64 `json:"marketPriceUsd,omitempty"`

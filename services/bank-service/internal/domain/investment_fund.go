@@ -9,8 +9,8 @@ import (
 // ─── Greške ───────────────────────────────────────────────────────────────────
 
 var (
-	ErrFundNotFound        = errors.New("fond nije pronađen")
-	ErrFundNameExists      = errors.New("fond sa ovim nazivom već postoji")
+	ErrFundNotFound         = errors.New("fond nije pronađen")
+	ErrFundNameExists       = errors.New("fond sa ovim nazivom već postoji")
 	ErrNotSupervisorForFund = errors.New("samo supervizori mogu kreirati fondove")
 )
 
@@ -56,7 +56,7 @@ type ClientFundTransaction struct {
 	FundID    int64
 	UserID    int64
 	AmountRSD float64
-	Status    string    // pending | completed | failed
+	Status    string // pending | completed | failed
 	CreatedAt time.Time
 	IsInflow  bool // true = uplata, false = isplata
 }

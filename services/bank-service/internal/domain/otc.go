@@ -153,10 +153,10 @@ type AcceptOTCOfferInput struct {
 }
 
 type ListOTCOffersFilter struct {
-	UserID      int64           // ulogovani korisnik
-	Status      *OTCOfferStatus // opciono
-	Role        string          // "BUYER" | "SELLER" | "" (svi učesnici)
-	OnlyMyTurn  bool            // ako true, samo one gde modified_by != caller
+	UserID     int64           // ulogovani korisnik
+	Status     *OTCOfferStatus // opciono
+	Role       string          // "BUYER" | "SELLER" | "" (svi učesnici)
+	OnlyMyTurn bool            // ako true, samo one gde modified_by != caller
 }
 
 // ─── Repository i Service interfejsi ─────────────────────────────────────────

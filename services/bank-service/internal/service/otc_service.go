@@ -22,7 +22,7 @@ type otcService struct {
 
 // NewOTCService konstruše OTCService.
 //   - db          — root *gorm.DB; transakcije se otvaraju ovde i prosleđuju
-//                   repou (WithTx) i PaymentPortu (ExecuteOTCPremiumTransfer).
+//     repou (WithTx) i PaymentPortu (ExecuteOTCPremiumTransfer).
 //   - repo        — OTC repozitorijum (offers, contracts, capacity check).
 //   - paymentSvc  — PaymentService u ulozi OTCPaymentPort (premija).
 func NewOTCService(db *gorm.DB, repo domain.OTCRepository, paymentSvc domain.OTCPaymentPort) domain.OTCService {
@@ -190,11 +190,11 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 // ─── AcceptOffer ──────────────────────────────────────────────────────────────
 
 // AcceptOffer — atomsko prihvatanje. U JEDNOJ transakciji:
-//   1) lock ponude (FOR UPDATE) i validacija
-//   2) capacity check (još jednom — sprečava dupli-spend između status-prelaza)
-//   3) status ponude → ACCEPTED, modified_by = caller
-//   4) kreiranje OTCContract (VALID)
-//   5) transfer premije kroz PaymentService (auditovano, sa FX po potrebi)
+//  1. lock ponude (FOR UPDATE) i validacija
+//  2. capacity check (još jednom — sprečava dupli-spend između status-prelaza)
+//  3. status ponude → ACCEPTED, modified_by = caller
+//  4. kreiranje OTCContract (VALID)
+//  5. transfer premije kroz PaymentService (auditovano, sa FX po potrebi)
 //
 // Pravila:
 //   - caller mora biti učesnik (buyer ili seller).
