@@ -507,5 +507,74 @@ func (r *otcRepository) CreateContract(ctx context.Context, c domain.OTCContract
 	return &d, nil
 }
 
+// ─── Contract metode ─────────────────────────────────────────────────────────
+
+// ListContracts vraća sve ugovore u kojima je korisnik kupac ili prodavac,
+// sortirane po datumu kreiranja (najnoviji prvi).
+func (r *otcRepository) ListContracts(ctx context.Context, userID int64) ([]domain.OTCContract, error) {
+	var rows []otcContractModel
+	if err := r.db.WithContext(ctx).
+		Where("buyer_id = ? OR seller_id = ?", userID, userID).
+		Order("created_at DESC").
+		Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list otc contracts: %w", err)
+	}
+	out := make([]domain.OTCContract, 0, len(rows))
+	for _, m := range rows {
+		out = append(out, m.toDomain())
+	}
+	return out, nil
+}
+
+// GetContractByID vraća ugovor po ID-u; ErrOTCContractNotFound ako ne postoji.
+func (r *otcRepository) GetContractByID(ctx context.Context, id int64) (*domain.OTCContract, error) {
+	var m otcContractModel
+	if err := r.db.WithContext(ctx).First(&m, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, domain.ErrOTCContractNotFound
+		}
+		return nil, fmt.Errorf("get otc contract: %w", err)
+	}
+	d := m.toDomain()
+	return &d, nil
+}
+
+// GetContractByIDForUpdate čita ugovor sa SELECT FOR UPDATE (mora biti unutar tx).
+func (r *otcRepository) GetContractByIDForUpdate(ctx context.Context, id int64) (*domain.OTCContract, error) {
+	var m otcContractModel
+	if err := r.db.WithContext(ctx).
+		Raw("SELECT * FROM core_banking.otc_contracts WHERE id = ? FOR UPDATE", id).
+		Scan(&m).Error; err != nil {
+		return nil, fmt.Errorf("select otc contract for update: %w", err)
+	}
+	if m.ID == 0 {
+		return nil, domain.ErrOTCContractNotFound
+	}
+	d := m.toDomain()
+	return &d, nil
+}
+
+// UpdateContractStatus postavlja novi status; za EXERCISED automatski upisuje exercised_at.
+func (r *otcRepository) UpdateContractStatus(ctx context.Context, id int64, status domain.OTCContractStatus) error {
+	updates := map[string]interface{}{
+		"status": string(status),
+	}
+	if status == domain.OTCContractExercised {
+		now := time.Now().UTC()
+		updates["exercised_at"] = now
+	}
+	res := r.db.WithContext(ctx).
+		Model(&otcContractModel{}).
+		Where("id = ?", id).
+		Updates(updates)
+	if res.Error != nil {
+		return fmt.Errorf("update otc contract status: %w", res.Error)
+	}
+	if res.RowsAffected == 0 {
+		return domain.ErrOTCContractNotFound
+	}
+	return nil
+}
+
 // Napomena: transfer premije je preseljen u PaymentService
 // (ExecuteOTCPremiumTransfer) zbog audit logova, knjiženja i FX podrške.

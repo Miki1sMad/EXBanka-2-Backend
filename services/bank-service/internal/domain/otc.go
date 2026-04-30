@@ -30,23 +30,111 @@ const (
 	OTCContractExercised OTCContractStatus = "EXERCISED"
 )
 
+// ─── SAGA tipovi ─────────────────────────────────────────────────────────────
+
+// OTCSagaStep je korak SAGA orkestratora za izvršavanje OTC ugovora.
+// Vrednost predstavlja POSLEDNJI USPEŠNO ZAVRŠEN korak (ne tekući).
+type OTCSagaStep string
+
+const (
+	OTCSagaStepPending            OTCSagaStep = "PENDING"             // još nije počelo
+	OTCSagaStepReserveFunds       OTCSagaStep = "RESERVE_FUNDS"       // sredstva kupca rezervisana
+	OTCSagaStepReserveSecurities  OTCSagaStep = "RESERVE_SECURITIES"  // akcije prodavca sklonjene iz public_shares
+	OTCSagaStepTransferFunds      OTCSagaStep = "TRANSFER_FUNDS"      // sredstva prebačena kupac → prodavac
+	OTCSagaStepTransferOwnership  OTCSagaStep = "TRANSFER_OWNERSHIP"  // vlasništvo preneseno na kupca
+	OTCSagaStepCompleted          OTCSagaStep = "COMPLETED"           // sve faze uspešne
+)
+
+// OTCSagaStatus je ukupan status SAGA egzekucije.
+type OTCSagaStatus string
+
+const (
+	OTCSagaStatusInProgress          OTCSagaStatus = "IN_PROGRESS"
+	OTCSagaStatusCompleted           OTCSagaStatus = "COMPLETED"
+	OTCSagaStatusFailed              OTCSagaStatus = "FAILED"
+	OTCSagaStatusCompensating        OTCSagaStatus = "COMPENSATING"
+	OTCSagaStatusCompensationFailed  OTCSagaStatus = "COMPENSATION_FAILED"
+)
+
+// OTCSagaExecution prati stanje jedne SAGA egzekucije u bazi.
+type OTCSagaExecution struct {
+	ID                   int64
+	ContractID           int64
+	CurrentStep          OTCSagaStep
+	Status               OTCSagaStatus
+	BuyerReservedAmount  float64   // iznos rezervisan na buyerAccount (za rollback korak 1)
+	ErrorMessage         string
+	RetryCount           int
+	InitiatedBy          int64
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+// OTCSagaStepStatus je rezultat jednog koraka.
+type OTCSagaStepStatus string
+
+const (
+	OTCSagaStepStatusCompleted           OTCSagaStepStatus = "COMPLETED"
+	OTCSagaStepStatusFailed              OTCSagaStepStatus = "FAILED"
+	OTCSagaStepStatusCompensated         OTCSagaStepStatus = "COMPENSATED"
+	OTCSagaStepStatusCompensationFailed  OTCSagaStepStatus = "COMPENSATION_FAILED"
+)
+
+// OTCSagaStepLogEntry je jedan red u otc_saga_step_log.
+type OTCSagaStepLogEntry struct {
+	ID          int64
+	ExecutionID int64
+	Step        OTCSagaStep
+	StepStatus  OTCSagaStepStatus
+	ErrorMsg    string
+	Attempt     int
+	CreatedAt   time.Time
+}
+
+// ─── Contract DTO-ovi za listanje ─────────────────────────────────────────────
+
+// OTCContractListItem je projekcija ugovora za GET /api/otc/contracts.
+// Profit je izvedena vrednost: (TrenutnaTrazisCena - StrikePrice) * Amount - Premium.
+type OTCContractListItem struct {
+	OTCContract
+	Ticker         string
+	StockName      string
+	Exchange       string
+	CurrentPrice   float64 // tržišna cena akcije u trenutku listanja
+	Profit         float64 // (CurrentPrice - StrikePrice) * Amount - Premium
+	SellerName     string  // "Ime Prezime" prodavca (iz user-service)
+	SellerBankName string  // naziv banke prodavca (npr. "Banka 1")
+	SellerInfo     string  // formatirano "Ime Prezime, Naziv Banke" za UI
+}
+
+// ExerciseOTCContractInput ulazni parametri za izvršavanje OTC ugovora.
+type ExerciseOTCContractInput struct {
+	ContractID  int64
+	CallerID    int64 // mora biti BuyerID ugovora
+}
+
 // ─── Greške ───────────────────────────────────────────────────────────────────
 
 var (
-	ErrOTCOfferNotFound        = errors.New("OTC ponuda nije pronađena")
-	ErrOTCNotInPublicRegime    = errors.New("akcija nije postavljena u javni režim")
-	ErrOTCInsufficientCapacity = errors.New("prodavac nema dovoljno akcija u javnom režimu (suma aktivnih ponuda i ugovora bi prešla raspoloživost)")
-	ErrOTCNotCounterparty      = errors.New("odgovor na ponudu može poslati samo druga strana (nije vaš red)")
-	ErrOTCInvalidStatus        = errors.New("operacija nije dozvoljena u trenutnom statusu ponude")
-	ErrOTCSelfTrade            = errors.New("kupac i prodavac moraju biti različite osobe")
-	ErrOTCSelfAccept           = errors.New("ne možete prihvatiti ponudu koju ste sami poslednji izmenili")
-	ErrOTCNotParticipant       = errors.New("niste učesnik u ovoj ponudi")
-	ErrOTCAccountNotOwned      = errors.New("račun ne pripada korisniku")
-	ErrOTCAccountCurrency      = errors.New("valuta računa ne odgovara valuti hartije")
-	ErrOTCInsufficientFunds    = errors.New("nedovoljno raspoloživih sredstava na računu kupca za isplatu premije")
-	ErrOTCSellerAccountMissing = errors.New("prodavac još nije postavio svoj račun za premiju")
-	ErrOTCInvalidInput         = errors.New("neispravan unos (količina, cena, premija ili datum)")
-	ErrOTCListingNotFound      = errors.New("hartija od vrednosti nije pronađena")
+	ErrOTCOfferNotFound           = errors.New("OTC ponuda nije pronađena")
+	ErrOTCContractNotFound        = errors.New("OTC ugovor nije pronađen")
+	ErrOTCNotInPublicRegime       = errors.New("akcija nije postavljena u javni režim")
+	ErrOTCInsufficientCapacity    = errors.New("prodavac nema dovoljno akcija u javnom režimu (suma aktivnih ponuda i ugovora bi prešla raspoloživost)")
+	ErrOTCNotCounterparty         = errors.New("odgovor na ponudu može poslati samo druga strana (nije vaš red)")
+	ErrOTCInvalidStatus           = errors.New("operacija nije dozvoljena u trenutnom statusu ponude")
+	ErrOTCSelfTrade               = errors.New("kupac i prodavac moraju biti različite osobe")
+	ErrOTCSelfAccept              = errors.New("ne možete prihvatiti ponudu koju ste sami poslednji izmenili")
+	ErrOTCNotParticipant          = errors.New("niste učesnik u ovoj ponudi")
+	ErrOTCAccountNotOwned         = errors.New("račun ne pripada korisniku")
+	ErrOTCAccountCurrency         = errors.New("valuta računa ne odgovara valuti hartije")
+	ErrOTCInsufficientFunds       = errors.New("nedovoljno raspoloživih sredstava na računu kupca za isplatu premije")
+	ErrOTCSellerAccountMissing    = errors.New("prodavac još nije postavio svoj račun za premiju")
+	ErrOTCInvalidInput            = errors.New("neispravan unos (količina, cena, premija ili datum)")
+	ErrOTCListingNotFound         = errors.New("hartija od vrednosti nije pronađena")
+	ErrOTCContractNotBuyer        = errors.New("samo kupac može izvršiti OTC ugovor")
+	ErrOTCContractExpired         = errors.New("OTC ugovor je istekao (settlementDate je prošao)")
+	ErrOTCContractAlreadyExecuted = errors.New("OTC ugovor je već izvršen")
+	ErrOTCSagaAlreadyRunning      = errors.New("izvršavanje ovog ugovora je već u toku — pokušajte ponovo za trenutak")
 )
 
 // ─── Entiteti ─────────────────────────────────────────────────────────────────
@@ -194,8 +282,44 @@ type OTCRepository interface {
 	// GetListingCurrency vraća valutu (oznaka, npr "USD") u kojoj se trguje data hartija.
 	GetListingCurrency(ctx context.Context, listingID int64) (string, error)
 
+	// ListContracts vraća sve ugovore u kojima učestvuje korisnik (kao buyer ili seller).
+	ListContracts(ctx context.Context, userID int64) ([]OTCContract, error)
+
+	// GetContractByID vraća ugovor po ID-u.
+	GetContractByID(ctx context.Context, id int64) (*OTCContract, error)
+
+	// GetContractByIDForUpdate čita ugovor sa SELECT FOR UPDATE (mora biti unutar tx).
+	GetContractByIDForUpdate(ctx context.Context, id int64) (*OTCContract, error)
+
+	// UpdateContractStatus postavlja novi status ugovora i exercised_at (ako je EXERCISED).
+	UpdateContractStatus(ctx context.Context, id int64, status OTCContractStatus) error
+
 	// WithTx vraća instancu repoa koja radi nad datom *gorm.DB transakcijom.
 	WithTx(tx interface{}) OTCRepository
+}
+
+// OTCSagaRepository upravlja perzistencijom SAGA stanja.
+type OTCSagaRepository interface {
+	// CreateExecution kreira novi saga red u IN_PROGRESS, korak PENDING.
+	CreateExecution(ctx context.Context, contractID, initiatedBy int64, buyerReservedAmount float64) (*OTCSagaExecution, error)
+
+	// GetExecution čita egzekuciju po ID-u.
+	GetExecution(ctx context.Context, id int64) (*OTCSagaExecution, error)
+
+	// GetExecutionByContractID čita egzekuciju za dati contract_id.
+	GetExecutionByContractID(ctx context.Context, contractID int64) (*OTCSagaExecution, error)
+
+	// UpdateStep ažurira current_step, status i error_message.
+	UpdateStep(ctx context.Context, id int64, step OTCSagaStep, status OTCSagaStatus, errMsg string) error
+
+	// IncrementRetry povećava retry_count za 1 i vraća novi retry_count.
+	IncrementRetry(ctx context.Context, id int64) (int, error)
+
+	// LogStep upisuje jedan red u otc_saga_step_log.
+	LogStep(ctx context.Context, executionID int64, step OTCSagaStep, stepStatus OTCSagaStepStatus, errMsg string, attempt int) error
+
+	// WithTx vraća instancu koja radi nad datom *gorm.DB transakcijom.
+	WithTx(tx interface{}) OTCSagaRepository
 }
 
 // OTCPaymentPort — uži port koji OTCService koristi za isplatu premije kroz
@@ -225,4 +349,18 @@ type OTCService interface {
 	ListOffers(ctx context.Context, filter ListOTCOffersFilter) ([]OTCOfferListItem, error)
 	GetOffer(ctx context.Context, offerID, callerID int64) (*OTCOfferListItem, error)
 	ListMarketplace(ctx context.Context, callerID int64) ([]OTCMarketplaceItem, error)
+}
+
+// OTCContractService upravlja OTC ugovorima i njihovim SAGA izvršavanjem.
+type OTCContractService interface {
+	// ListContracts vraća sve ugovore korisnika sa deriviranim vrednostima (Profit, SellerInfo).
+	ListContracts(ctx context.Context, userID int64) ([]OTCContractListItem, error)
+
+	// GetContract vraća jedan ugovor sa deriviranim vrednostima.
+	GetContract(ctx context.Context, contractID, callerID int64) (*OTCContractListItem, error)
+
+	// ExerciseContract pokreće SAGA tok za izvršavanje OTC ugovora.
+	// Samo kupac (BuyerID) može pozvati ovu metodu.
+	// Vraća sagaExecution.ID za praćenje; greška ako se SAGA ne može pokrenuti.
+	ExerciseContract(ctx context.Context, in ExerciseOTCContractInput) (*OTCSagaExecution, error)
 }
