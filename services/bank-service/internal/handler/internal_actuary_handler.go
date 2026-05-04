@@ -119,15 +119,24 @@ func (h *InternalActuaryHandler) handleDelete(w http.ResponseWriter, r *http.Req
 	}
 
 	// Ako je obrisan supervizor, prebaci fondove na admina iz JWT-a.
+	// Greška pri prenosu se propagira kao 500 — user-service tada može
+	// rollback-ovati promenu permisije i prikazati poruku adminu.
 	if isSupervisorBeingRemoved && h.fundService != nil {
 		claims, ok := h.requireAdmin(r)
-		if ok {
-			adminID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
-			if parseErr == nil {
-				if transferErr := h.fundService.TransferManagerFunds(r.Context(), employeeID, adminID); transferErr != nil {
-					log.Printf("[internal-actuary] prenos fondova employee_id=%d -> admin=%d: %v", employeeID, adminID, transferErr)
-				}
-			}
+		if !ok {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		adminID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+		if parseErr != nil {
+			log.Printf("[internal-actuary] ne mogu parsirati admin ID iz JWT-a: %v", parseErr)
+			http.Error(w, `{"error":"internal error: invalid admin token"}`, http.StatusInternalServerError)
+			return
+		}
+		if transferErr := h.fundService.TransferManagerFunds(r.Context(), employeeID, adminID); transferErr != nil {
+			log.Printf("[internal-actuary] GREŠKA pri prenosu fondova employee_id=%d -> admin=%d: %v", employeeID, adminID, transferErr)
+			http.Error(w, `{"error":"prenos fondova nije uspeo — permisija nije uklonjena"}`, http.StatusInternalServerError)
+			return
 		}
 	}
 

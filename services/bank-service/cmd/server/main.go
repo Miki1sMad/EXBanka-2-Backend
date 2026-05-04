@@ -210,7 +210,6 @@ func main() {
 	taxHandler := handler.NewTaxHandler(taxService, cfg.JWTAccessSecret)
 	myOrdersHandler := handler.NewMyOrdersHandler(tradingService, cfg.JWTAccessSecret)
 	tradingFXHandler := handler.NewTradingFXHandler(tradingService, accountService, exchangeService, cfg.JWTAccessSecret)
-	fundHandler := handler.NewFundHandler(db, exchangeService, cfg.JWTAccessSecret)
 
 	// ── InvestmentFundHandler — Discovery, Details, Create, FundOrder (Celina 4) ─
 	investmentFundService := service.NewInvestmentFundService(
@@ -230,15 +229,33 @@ func main() {
 		cfg.JWTAccessSecret,
 	)
 
+	fundHandler := handler.NewFundHandler(db, exchangeService, investmentFundService, cfg.JWTAccessSecret)
+
 	// InternalActuaryHandler proširen za prenos menadžmenta fondova
 	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret)
+
+	// ── BankProfitHandler — actuary-performance + fund-positions (Celina 4) ──
+	bankProfitHandler := handler.NewBankProfitHandler(db, investmentFundService, userClient, cfg.JWTAccessSecret)
 
 	// ── OTC (Faza 2) ─────────────────────────────────────────────────────────
 	// PaymentService igra ulogu OTCPaymentPort — premija ide kroz auditovanu
 	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
 	otcRepo := repository.NewOTCRepository(db)
 	otcService := service.NewOTCService(db, otcRepo, paymentService)
-	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret)
+	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID)
+
+	// ── OTC Contracts & SAGA (Celina 4) ──────────────────────────────────────
+	// OTCContractService orkestira SAGA tok za izvršavanje ("Iskoristi") OTC ugovora.
+	// OTCSagaRepository čuva stanje svake SAGA egzekucije u bazi za recovery.
+	otcSagaRepo := repository.NewOTCSagaRepository(db)
+	otcContractService := service.NewOTCContractService(
+		db,
+		otcRepo,
+		otcSagaRepo,
+		listingService,
+		exchangeService,
+	)
+	otcContractHandler := handler.NewOTCContractHandler(otcContractService, userClient, cfg.JWTAccessSecret)
 
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
 	// Sve rute zahtevaju validan JWT access token osim gRPC health check-a.
@@ -319,6 +336,12 @@ func main() {
 	httpMux.Handle("/api/otc/marketplace", otcHandler) // GET — public_shares marketplace (Faza 2)
 	httpMux.Handle("/api/otc/offers", otcHandler)      // POST (create) + GET (list)
 	httpMux.Handle("/api/otc/offers/", otcHandler)     // GET /{id}, PATCH /{id}/{counter|accept|decline}
+	// OTC Contracts & SAGA (Celina 4) — /api/otc/contracts...
+	httpMux.Handle("/api/otc/contracts", otcContractHandler)  // GET — lista ugovora korisnika
+	httpMux.Handle("/api/otc/contracts/", otcContractHandler) // GET /{id}, POST /{id}/execute
+	// Bank Profit Portal (Celina 4) — supervisor-only analytics
+	httpMux.Handle("GET /bank/actuary-performance", http.HandlerFunc(bankProfitHandler.ActuaryPerformanceHandler))
+	httpMux.Handle("GET /bank/fund-positions", http.HandlerFunc(bankProfitHandler.FundPositionsHandler))
 
 	httpMux.Handle("/", gwMux) // sve ostalo → gRPC-Gateway
 
@@ -368,6 +391,43 @@ func main() {
 	}
 	monthlyTaxWorker := worker.NewMonthlyTaxWorker(taxRunner)
 	go monthlyTaxWorker.Start(ctx)
+
+	// ── 7g. Start FundPerformanceWorker (daily snapshot fonda u ponoć) ────────
+	// Adapter dohvata sve fondove, za svaki traži FundValueRSD iz servisa, i
+	// radi UPSERT u fund_performance_snapshots (ON CONFLICT DO UPDATE).
+	snapshotRunner := func(ctx context.Context, date time.Time) error {
+		funds, err := investmentFundService.ListFunds(ctx, domain.FundFilter{})
+		if err != nil {
+			return err
+		}
+		for _, f := range funds {
+			details, err := investmentFundService.GetFundDetails(ctx, f.ID)
+			if err != nil || details == nil {
+				log.Printf("[snapshotRunner] skipping fund %d: %v", f.ID, err)
+				continue
+			}
+			var totalInvested float64
+			db.WithContext(ctx).Raw(
+				`SELECT COALESCE(SUM(invested_rsd), 0) FROM core_banking.fund_positions WHERE fund_id = ?`,
+				f.ID,
+			).Scan(&totalInvested)
+
+			if err := db.WithContext(ctx).Exec(`
+				INSERT INTO core_banking.fund_performance_snapshots
+					(fund_id, snapshot_date, fund_value_rsd, total_invested, liquid_assets)
+				VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT (fund_id, snapshot_date) DO UPDATE SET
+					fund_value_rsd = EXCLUDED.fund_value_rsd,
+					total_invested = EXCLUDED.total_invested,
+					liquid_assets  = EXCLUDED.liquid_assets
+			`, f.ID, date, details.FundValueRSD, totalInvested, details.LiquidAssets).Error; err != nil {
+				log.Printf("[snapshotRunner] upsert fund %d: %v", f.ID, err)
+			}
+		}
+		return nil
+	}
+	fundPerfWorker := worker.NewFundPerformanceWorker(snapshotRunner)
+	go fundPerfWorker.Start(ctx)
 
 	// ── 7b. Start ActuaryConsumer (RabbitMQ event listener) ──────────────────
 	// Listens on the user_created queue and auto-provisions actuary profiles

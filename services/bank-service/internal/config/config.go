@@ -81,6 +81,11 @@ type Config struct {
 	// StateRevenueAccountID — core_banking.racun.id tekućeg RSD računa „države” za simulaciju
 	// prijema poreza (uplata istim iznosom u RSD kao što je obračunat). 0 = isključeno.
 	StateRevenueAccountID int64 // env: STATE_REVENUE_ACCOUNT_ID
+
+	// OwnBankID — identifikator ove banke. Upisuje se u seller_bank_id/buyer_bank_id
+	// OTC ponuda i ugovora kako bi se intra-bank i inter-bank transakcije mogle razlikovati.
+	// Default: 1 (prva i jedina banka u dev okruženju).
+	OwnBankID int64 // env: BANK_ID
 }
 
 // Load reads ENV vars and returns a populated Config.
@@ -128,6 +133,7 @@ func Load() (*Config, error) {
 		ListingRefreshIntervalMinutes: getEnvInt("LISTING_REFRESH_INTERVAL_MINUTES", 15),
 		ListingRequireLiveQuotes:      loadListingRequireLiveQuotes(),
 		StateRevenueAccountID:         getEnvInt64("STATE_REVENUE_ACCOUNT_ID", 0),
+		OwnBankID:                     getEnvInt64("BANK_ID", 1),
 	}, nil
 }
 
