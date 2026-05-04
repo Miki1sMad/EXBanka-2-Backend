@@ -222,6 +222,9 @@ type CreateOTCOfferInput struct {
 	PricePerStock  float64
 	Premium        float64
 	SettlementDate time.Time
+	// Inter-bank: postavljaju se na ownBankID ako nije inter-bank ponuda.
+	BuyerBankID  *int64
+	SellerBankID *int64
 }
 
 type CounterOTCOfferInput struct {
@@ -245,6 +248,10 @@ type ListOTCOffersFilter struct {
 	Status     *OTCOfferStatus // opciono
 	Role       string          // "BUYER" | "SELLER" | "" (svi učesnici)
 	OnlyMyTurn bool            // ako true, samo one gde modified_by != caller
+	// BankFilter filtrira ponude po tipu banke učesnice.
+	// "" | "ALL" = sve, "OWN" = intra-bank, "INTERBANK" = cross-bank ponude.
+	BankFilter string
+	OwnBankID  int64 // ID naše banke — potreban za filtriranje
 }
 
 // ─── Repository i Service interfejsi ─────────────────────────────────────────

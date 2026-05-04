@@ -28,10 +28,11 @@ import (
 type OTCHandler struct {
 	svc       domain.OTCService
 	jwtSecret string
+	ownBankID int64 // ID ove banke; upisuje se u buyer_bank_id/seller_bank_id pri kreiranju ponuda
 }
 
-func NewOTCHandler(svc domain.OTCService, jwtSecret string) *OTCHandler {
-	return &OTCHandler{svc: svc, jwtSecret: jwtSecret}
+func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64) *OTCHandler {
+	return &OTCHandler{svc: svc, jwtSecret: jwtSecret, ownBankID: ownBankID}
 }
 
 // ServeHTTP dispetcher. Putanju cepamo ručno da bismo ostali konzistentni sa
@@ -139,6 +140,9 @@ type createOfferReq struct {
 	PricePerStock  float64 `json:"pricePerStock"`
 	Premium        float64 `json:"premium"`
 	SettlementDate string  `json:"settlementDate"` // YYYY-MM-DD
+	// Inter-bank: opcionalno; ako je drugačiji od ownBankID, ponuda se tretira
+	// kao cross-bank. Ako nije prosleđen, podrazumeva se ownBankID (intra-bank).
+	SellerBankID *int64 `json:"sellerBankId,omitempty"`
 }
 
 type counterOfferReq struct {
@@ -266,6 +270,14 @@ func (h *OTCHandler) handleCreate(w http.ResponseWriter, r *http.Request, caller
 		return
 	}
 
+	// Kupac je uvek iz naše banke; prodavac je iz naše banke osim ako
+	// je eksplicitno prosleđen drugi sellerBankId (inter-bank ponuda).
+	buyerBankID := h.ownBankID
+	sellerBankID := h.ownBankID
+	if req.SellerBankID != nil && *req.SellerBankID != 0 {
+		sellerBankID = *req.SellerBankID
+	}
+
 	offer, err := h.svc.CreateOffer(r.Context(), domain.CreateOTCOfferInput{
 		ListingID:      req.ListingID,
 		BuyerID:        callerID,
@@ -275,6 +287,8 @@ func (h *OTCHandler) handleCreate(w http.ResponseWriter, r *http.Request, caller
 		PricePerStock:  req.PricePerStock,
 		Premium:        req.Premium,
 		SettlementDate: settle,
+		BuyerBankID:    &buyerBankID,
+		SellerBankID:   &sellerBankID,
 	})
 	if err != nil {
 		h.writeServiceError(w, err)
@@ -374,7 +388,7 @@ func (h *OTCHandler) handleMarketplace(w http.ResponseWriter, r *http.Request, c
 
 func (h *OTCHandler) handleList(w http.ResponseWriter, r *http.Request, callerID int64) {
 	q := r.URL.Query()
-	filter := domain.ListOTCOffersFilter{UserID: callerID}
+	filter := domain.ListOTCOffersFilter{UserID: callerID, OwnBankID: h.ownBankID}
 	if s := q.Get("status"); s != "" {
 		v := domain.OTCOfferStatus(strings.ToUpper(s))
 		filter.Status = &v
@@ -384,6 +398,9 @@ func (h *OTCHandler) handleList(w http.ResponseWriter, r *http.Request, callerID
 	}
 	if q.Get("onlyMyTurn") == "true" {
 		filter.OnlyMyTurn = true
+	}
+	if bf := strings.ToUpper(q.Get("bankFilter")); bf == "OWN" || bf == "INTERBANK" {
+		filter.BankFilter = bf
 	}
 
 	items, err := h.svc.ListOffers(r.Context(), filter)

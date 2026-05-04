@@ -97,9 +97,9 @@ func (s *otcService) CreateOffer(ctx context.Context, in domain.CreateOTCOfferIn
 			Premium:        in.Premium,
 			SettlementDate: in.SettlementDate,
 			Status:         domain.OTCOfferPending,
-			ModifiedBy:     in.BuyerID, // kupac je inicijator → modified_by = buyer
-			// SellerBankID/BuyerBankID — forward-compat; ostavljeno NULL dok ne
-			// uvedemo inter-bank trgovinu.
+			ModifiedBy:     in.BuyerID,
+			BuyerBankID:    in.BuyerBankID,
+			SellerBankID:   in.SellerBankID,
 		}
 		out, err := repo.CreateOffer(ctx, offer)
 		if err != nil {

@@ -242,7 +242,7 @@ func main() {
 	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
 	otcRepo := repository.NewOTCRepository(db)
 	otcService := service.NewOTCService(db, otcRepo, paymentService)
-	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret)
+	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID)
 
 	// ── OTC Contracts & SAGA (Celina 4) ──────────────────────────────────────
 	// OTCContractService orkestira SAGA tok za izvršavanje ("Iskoristi") OTC ugovora.

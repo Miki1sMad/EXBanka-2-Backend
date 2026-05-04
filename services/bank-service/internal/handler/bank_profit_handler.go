@@ -3,8 +3,8 @@ package handler
 // bank_profit_handler.go — HTTP handlers za Portal "Profit Banke" (Celina 4).
 //
 // Endpoints:
-//   GET /bank/actuary-performance  — agregiran profit svakog aktuara agenta iz DONE SELL naloga
-//   GET /bank/fund-positions       — sve klijentske pozicije u fondovima koje upravlja supervisor
+//   GET /bank/actuary-performance  — agregiran profit svakog aktuara (agent I supervisor) iz DONE SELL naloga
+//   GET /bank/fund-positions       — pozicije banke (treasury account, user_id=2) u svim investicionim fondovima
 //
 // Auth: Bearer JWT, zaštita samo za SUPERVISOR/ADMIN.
 
@@ -98,8 +98,9 @@ type actuaryProfitRow struct {
 	TotalProfit float64 `gorm:"column:total_profit"`
 }
 
-// actuaryProfitSQL agregira ostvareni profit svakog aktuara agenta koristeći
-// isti WAVG pristup kao tax_service: profit = (avg_sell − avg_buy) × qty.
+// actuaryProfitSQL agregira ostvareni profit svakog aktuara (i AGENT i SUPERVISOR)
+// koristeći isti WAVG pristup kao tax_service: profit = (avg_sell − avg_buy) × qty.
+// Specifikacija Celina 4 / test scenario 23 zahteva "listu svih aktuara" — bez filtera po tipu.
 const actuaryProfitSQL = `
 WITH sell_fills AS (
     SELECT
@@ -143,7 +144,6 @@ FROM core_banking.actuary_info ai
 LEFT JOIN sell_fills s ON s.user_id  = ai.employee_id
 LEFT JOIN buy_avg    b ON b.user_id  = ai.employee_id
                        AND b.listing_id = s.listing_id
-WHERE ai.actuary_type = 'AGENT'
 GROUP BY ai.employee_id, ai.actuary_type
 ORDER BY total_profit DESC
 `
@@ -187,11 +187,19 @@ func (h *BankProfitHandler) ActuaryPerformanceHandler(w http.ResponseWriter, r *
 
 // ─── GET /bank/fund-positions ─────────────────────────────────────────────────
 
+// bankSystemUserID je user_id sistemskog treasury računa banke.
+// Usklađeno sa CreateFund logikom u investment_fund_service.go (VlasnikID=2).
+// Ovaj ID identifikuje banku kao investitora pri čuvanju fund_positions.
+const bankSystemUserID int64 = 2
+
 type fundPositionDTO struct {
 	ID                   string   `json:"id"`
 	ClientID             string   `json:"clientId"`
 	ClientName           string   `json:"clientName"`
 	FundID               string   `json:"fundId"`
+	FundName             string   `json:"fundName"`
+	ManagerID            string   `json:"managerId"`
+	ManagerName          string   `json:"managerName"`
 	TotalInvestedAmount  float64  `json:"totalInvestedAmount"`
 	FundSharePercentage  *float64 `json:"fundSharePercentage"`
 	CurrentPositionValue *float64 `json:"currentPositionValue"`
@@ -201,6 +209,8 @@ type fundPositionDTO struct {
 type fundPosRow struct {
 	ID                int64     `gorm:"column:id"`
 	FundID            int64     `gorm:"column:fund_id"`
+	FundName          string    `gorm:"column:fund_name"`
+	ManagerID         int64     `gorm:"column:manager_id"`
 	UserID            int64     `gorm:"column:user_id"`
 	InvestedRSD       float64   `gorm:"column:invested_rsd"`
 	LastChanged       time.Time `gorm:"column:last_changed"`
@@ -208,6 +218,10 @@ type fundPosRow struct {
 }
 
 // FundPositionsHandler — GET /bank/fund-positions
+//
+// Vraća sve pozicije banke (bankSystemUserID) u svim investicionim fondovima.
+// Specifikacija: "Svi investicioni fondovi u kojima banka ima udele" — filter
+// je po user_id banke (treasury), NE po manager_id supervizora koji gleda stranicu.
 func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -217,7 +231,7 @@ func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	supervisorID, _, ok := h.authSupervisor(w, r)
+	_, _, ok := h.authSupervisor(w, r)
 	if !ok {
 		return
 	}
@@ -229,6 +243,8 @@ func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.
 		SELECT
 			fp.id,
 			fp.fund_id,
+			f.name        AS fund_name,
+			f.manager_id,
 			fp.user_id,
 			fp.invested_rsd,
 			COALESCE(fp.last_changed, fp.created_at) AS last_changed,
@@ -240,9 +256,9 @@ func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.
 			FROM core_banking.fund_positions
 			GROUP BY fund_id
 		) tot ON tot.fund_id = fp.fund_id
-		WHERE f.manager_id = ?
-		ORDER BY fp.fund_id, fp.invested_rsd DESC
-	`, supervisorID).Scan(&rows).Error; err != nil {
+		WHERE fp.user_id = ?
+		ORDER BY fp.fund_id
+	`, bankSystemUserID).Scan(&rows).Error; err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu pozicija")
 		return
 	}
@@ -264,7 +280,7 @@ func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.
 
 	out := make([]fundPositionDTO, 0, len(rows))
 	for _, row := range rows {
-		clientName := h.resolveClientName(r, row.UserID)
+		firstName, lastName := h.resolveEmployeeName(r, row.ManagerID)
 
 		var sharePercent *float64
 		var currentValue *float64
@@ -280,8 +296,11 @@ func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.
 		out = append(out, fundPositionDTO{
 			ID:                   strconv.FormatInt(row.ID, 10),
 			ClientID:             strconv.FormatInt(row.UserID, 10),
-			ClientName:           clientName,
+			ClientName:           "Banka",
 			FundID:               strconv.FormatInt(row.FundID, 10),
+			FundName:             row.FundName,
+			ManagerID:            strconv.FormatInt(row.ManagerID, 10),
+			ManagerName:          strings.TrimSpace(firstName + " " + lastName),
 			TotalInvestedAmount:  row.InvestedRSD,
 			FundSharePercentage:  sharePercent,
 			CurrentPositionValue: currentValue,

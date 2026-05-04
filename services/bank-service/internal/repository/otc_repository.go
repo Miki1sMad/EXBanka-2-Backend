@@ -350,6 +350,19 @@ func (r *otcRepository) ListOffers(ctx context.Context, filter domain.ListOTCOff
 	if filter.OnlyMyTurn {
 		q = q.Where("o.modified_by <> ?", filter.UserID)
 	}
+	switch filter.BankFilter {
+	case "OWN":
+		// Intra-bank: obе strane su iz iste banke (ili nijedna nije tagirana).
+		if filter.OwnBankID > 0 {
+			q = q.Where("(o.seller_bank_id = ? AND o.buyer_bank_id = ?) OR (o.seller_bank_id IS NULL AND o.buyer_bank_id IS NULL)",
+				filter.OwnBankID, filter.OwnBankID)
+		}
+	case "INTERBANK":
+		// Cross-bank: prodavac i kupac su iz različitih banaka.
+		if filter.OwnBankID > 0 {
+			q = q.Where("(o.seller_bank_id IS NOT NULL AND o.buyer_bank_id IS NOT NULL AND o.seller_bank_id <> o.buyer_bank_id)")
+		}
+	}
 
 	var rows []row
 	if err := q.Scan(&rows).Error; err != nil {

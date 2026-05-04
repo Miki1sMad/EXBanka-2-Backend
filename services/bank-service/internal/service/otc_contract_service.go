@@ -10,11 +10,11 @@ package service
 //   STEP 1 — RESERVE_FUNDS:       Rezerviši iznos (amount × strikePrice) na buyerAccount
 //   STEP 2 — RESERVE_SECURITIES:  Ukloni amount akcija iz prodavčevih public_shares
 //   STEP 3 — TRANSFER_FUNDS:      Prebaci sredstva: buyerAccount → sellerAccount
-//   STEP 4 — TRANSFER_OWNERSHIP:  Kreiraj sintetički DONE BUY nalog za kupca (portfolio)
-//   STEP 5 — COMPLETED:           Označi ugovor EXERCISED, SAGA COMPLETED
+//   STEP 4 — TRANSFER_OWNERSHIP:  Kreiraj sintetički DONE BUY/SELL nalog (tagovan sa otc_saga_execution_id)
+//   STEP 5 — COMPLETED:           Double-check + označi ugovor EXERCISED, SAGA COMPLETED
 //
 // Kompenzacije (rollback od poslednjeg koraka unazad):
-//   comp(TRANSFER_OWNERSHIP) — delete sintetičkog naloga  (ako je kreiran)
+//   comp(TRANSFER_OWNERSHIP) — delete sintetičkih naloga po otc_saga_execution_id (precizno, bez heuristike)
 //   comp(TRANSFER_FUNDS)     — vrati sredstva: sellerAccount → buyerAccount
 //   comp(RESERVE_SECURITIES) — vrati akcije u public_shares prodavca
 //   comp(RESERVE_FUNDS)      — oslobodi rezervisana sredstva na buyerAccount
@@ -194,8 +194,11 @@ func (s *otcContractService) runSaga(ctx context.Context, exec *domain.OTCSagaEx
 		return
 	}
 
-	// STEP 5: COMPLETED — označi ugovor i SAGU kao uspešno završene
-	s.markCompleted(ctx, exec, c)
+	// STEP 5: COMPLETED — double-check konzistentnosti + finalizacija
+	if err := s.markCompleted(ctx, exec, c); err != nil {
+		s.compensateFrom(ctx, exec, domain.OTCSagaStepTransferOwnership, err)
+		return
+	}
 }
 
 // ─── SAGA koraci ──────────────────────────────────────────────────────────────
@@ -309,7 +312,8 @@ func (s *otcContractService) stepTransferFunds(ctx context.Context, exec *domain
 }
 
 // stepTransferOwnership kreira sintetički DONE BUY nalog za kupca i DONE SELL za prodavca.
-// Ovo osigurava da se akcije pojave u portfolio agregatima oba korisnika.
+// Oba naloga su označena sa otc_saga_execution_id (migr. 000050) što omogućava
+// precizno brisanje u compensateTransferOwnership bez vremenskih heuristika.
 func (s *otcContractService) stepTransferOwnership(ctx context.Context, exec *domain.OTCSagaExecution, c *domain.OTCContract) error {
 	now := time.Now().UTC()
 
@@ -319,10 +323,11 @@ func (s *otcContractService) stepTransferOwnership(ctx context.Context, exec *do
 			INSERT INTO core_banking.orders
 			  (user_id, account_id, listing_id, order_type, direction, quantity, contract_size,
 			   price_per_unit, status, is_done, remaining_portions,
-			   after_hours, all_or_none, margin, last_modified, created_at)
+			   after_hours, all_or_none, margin, last_modified, created_at,
+			   otc_saga_execution_id)
 			VALUES (?, ?, ?, 'MARKET', 'BUY', ?, 1, ?, 'DONE', TRUE, 0,
-			        FALSE, FALSE, FALSE, ?, ?)
-		`, c.BuyerID, c.BuyerAccountID, c.ListingID, c.Amount, c.StrikePrice, now, now).Error; err != nil {
+			        FALSE, FALSE, FALSE, ?, ?, ?)
+		`, c.BuyerID, c.BuyerAccountID, c.ListingID, c.Amount, c.StrikePrice, now, now, exec.ID).Error; err != nil {
 			return fmt.Errorf("create synthetic BUY order: %w", err)
 		}
 		// Sintetički SELL nalog za prodavca (uklanja akcije iz portfolio-a).
@@ -330,10 +335,11 @@ func (s *otcContractService) stepTransferOwnership(ctx context.Context, exec *do
 			INSERT INTO core_banking.orders
 			  (user_id, account_id, listing_id, order_type, direction, quantity, contract_size,
 			   price_per_unit, status, is_done, remaining_portions,
-			   after_hours, all_or_none, margin, last_modified, created_at)
+			   after_hours, all_or_none, margin, last_modified, created_at,
+			   otc_saga_execution_id)
 			VALUES (?, ?, ?, 'MARKET', 'SELL', ?, 1, ?, 'DONE', TRUE, 0,
-			        FALSE, FALSE, FALSE, ?, ?)
-		`, c.SellerID, c.SellerAccountID, c.ListingID, c.Amount, c.StrikePrice, now, now).Error; err != nil {
+			        FALSE, FALSE, FALSE, ?, ?, ?)
+		`, c.SellerID, c.SellerAccountID, c.ListingID, c.Amount, c.StrikePrice, now, now, exec.ID).Error; err != nil {
 			return fmt.Errorf("create synthetic SELL order: %w", err)
 		}
 		return nil
@@ -342,11 +348,34 @@ func (s *otcContractService) stepTransferOwnership(ctx context.Context, exec *do
 	return s.recordStep(ctx, exec, domain.OTCSagaStepTransferOwnership, txErr)
 }
 
-// markCompleted označava ugovor kao EXERCISED i SAGU kao COMPLETED.
-func (s *otcContractService) markCompleted(ctx context.Context, exec *domain.OTCSagaExecution, c *domain.OTCContract) {
-	_ = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		repo := s.contractRepo.WithTx(tx)
-		if err := repo.UpdateContractStatus(ctx, c.ID, domain.OTCContractExercised); err != nil {
+// markCompleted izvršava double-check konzistentnosti, pa atomično označava
+// ugovor kao EXERCISED i SAGU kao COMPLETED.
+// Vraća grešku ako double-check ili DB transakcija ne uspeju — pozivalac
+// (runSaga) tada pokreće kompenzaciju od koraka TRANSFER_OWNERSHIP unazad.
+func (s *otcContractService) markCompleted(ctx context.Context, exec *domain.OTCSagaExecution, c *domain.OTCContract) error {
+	// ── Double-check: verifikuj da sintetički BUY nalog iz koraka 4 postoji ──
+	// Koristimo otc_saga_execution_id (dodat migracijom 000050) za egzaktno
+	// podudaranje — nema vremenskih heuristika, nema lažnih pozitiva.
+	var syntheticCount int64
+	if err := s.db.WithContext(ctx).Raw(`
+		SELECT COUNT(*)
+		FROM core_banking.orders
+		WHERE otc_saga_execution_id = ?
+		  AND user_id    = ?
+		  AND listing_id = ?
+		  AND direction  = 'BUY'
+		  AND status     = 'DONE'
+		  AND is_done    = TRUE
+	`, exec.ID, c.BuyerID, c.ListingID).Scan(&syntheticCount).Error; err != nil {
+		return fmt.Errorf("double-check query: %w", err)
+	}
+	if syntheticCount == 0 {
+		return fmt.Errorf("double-check: sintetički BUY nalog nije pronađen (exec_id=%d, contract_id=%d)", exec.ID, c.ID)
+	}
+
+	// ── Finalizuj: atomično označi ugovor i SAGU kao završene ────────────────
+	if err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.contractRepo.WithTx(tx).UpdateContractStatus(ctx, c.ID, domain.OTCContractExercised); err != nil {
 			return err
 		}
 		return s.sagaRepo.WithTx(tx).UpdateStep(ctx, exec.ID,
@@ -354,9 +383,13 @@ func (s *otcContractService) markCompleted(ctx context.Context, exec *domain.OTC
 			domain.OTCSagaStatusCompleted,
 			"",
 		)
-	})
+	}); err != nil {
+		return fmt.Errorf("finalizacija SAGA zapisa: %w", err)
+	}
+
 	_ = s.sagaRepo.LogStep(ctx, exec.ID, domain.OTCSagaStepCompleted, domain.OTCSagaStepStatusCompleted, "", 1)
 	log.Printf("[SAGA] contract=%d exec=%d: COMPLETED", c.ID, exec.ID)
+	return nil
 }
 
 // ─── Kompenzacijska logika ────────────────────────────────────────────────────
@@ -522,37 +555,13 @@ func (s *otcContractService) compensateTransferFunds(ctx context.Context, exec *
 }
 
 // compensateTransferOwnership briše sintetičke DONE naloge kreirane u koraku 4.
-// Identifikuje ih po (user_id, listing_id, created_at) unutar kratkog prozora.
-func (s *otcContractService) compensateTransferOwnership(ctx context.Context, _ *domain.OTCSagaExecution, contractID int64) error {
-	return s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var c struct {
-			BuyerID         int64 `gorm:"column:buyer_id"`
-			SellerID        int64 `gorm:"column:seller_id"`
-			ListingID       int64 `gorm:"column:listing_id"`
-			BuyerAccountID  int64 `gorm:"column:buyer_account_id"`
-			SellerAccountID int64 `gorm:"column:seller_account_id"`
-		}
-		if err := tx.Raw(`
-			SELECT buyer_id, seller_id, listing_id, buyer_account_id, seller_account_id
-			FROM core_banking.otc_contracts WHERE id = ?
-		`, contractID).Scan(&c).Error; err != nil {
-			return err
-		}
-		// Briše sintetičke naloge kreirane u poslednjoj minuti za ovaj ugovor.
-		cutoff := time.Now().UTC().Add(-2 * time.Minute)
-		if err := tx.Exec(`
-			DELETE FROM core_banking.orders
-			WHERE user_id = ? AND account_id = ? AND listing_id = ?
-			  AND direction = 'BUY' AND status = 'DONE' AND created_at >= ?
-		`, c.BuyerID, c.BuyerAccountID, c.ListingID, cutoff).Error; err != nil {
-			return fmt.Errorf("delete synthetic BUY order: %w", err)
-		}
-		return tx.Exec(`
-			DELETE FROM core_banking.orders
-			WHERE user_id = ? AND account_id = ? AND listing_id = ?
-			  AND direction = 'SELL' AND status = 'DONE' AND created_at >= ?
-		`, c.SellerID, c.SellerAccountID, c.ListingID, cutoff).Error
-	})
+// Koristi otc_saga_execution_id za precizno podudaranje — nema vremenskih
+// heuristika i nema rizika od brisanja legitimnih naloga drugog korisnika.
+func (s *otcContractService) compensateTransferOwnership(ctx context.Context, exec *domain.OTCSagaExecution, _ int64) error {
+	return s.db.WithContext(ctx).Exec(`
+		DELETE FROM core_banking.orders
+		WHERE otc_saga_execution_id = ?
+	`, exec.ID).Error
 }
 
 // ─── Pomoćne metode ────────────────────────────────────────────────────────────
