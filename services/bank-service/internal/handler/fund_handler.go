@@ -780,7 +780,7 @@ func (h *FundHandler) fundPerformance(w http.ResponseWriter, r *http.Request, fu
 
 	out := make([]fundPerformancePoint, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, fundPerformancePoint{Period: row.Period, Value: row.Value})
+		out = append(out, fundPerformancePoint(row))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
