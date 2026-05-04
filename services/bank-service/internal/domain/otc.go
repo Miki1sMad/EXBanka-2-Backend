@@ -37,47 +37,47 @@ const (
 type OTCSagaStep string
 
 const (
-	OTCSagaStepPending            OTCSagaStep = "PENDING"             // još nije počelo
-	OTCSagaStepReserveFunds       OTCSagaStep = "RESERVE_FUNDS"       // sredstva kupca rezervisana
-	OTCSagaStepReserveSecurities  OTCSagaStep = "RESERVE_SECURITIES"  // akcije prodavca sklonjene iz public_shares
-	OTCSagaStepTransferFunds      OTCSagaStep = "TRANSFER_FUNDS"      // sredstva prebačena kupac → prodavac
-	OTCSagaStepTransferOwnership  OTCSagaStep = "TRANSFER_OWNERSHIP"  // vlasništvo preneseno na kupca
-	OTCSagaStepCompleted          OTCSagaStep = "COMPLETED"           // sve faze uspešne
+	OTCSagaStepPending           OTCSagaStep = "PENDING"            // još nije počelo
+	OTCSagaStepReserveFunds      OTCSagaStep = "RESERVE_FUNDS"      // sredstva kupca rezervisana
+	OTCSagaStepReserveSecurities OTCSagaStep = "RESERVE_SECURITIES" // akcije prodavca sklonjene iz public_shares
+	OTCSagaStepTransferFunds     OTCSagaStep = "TRANSFER_FUNDS"     // sredstva prebačena kupac → prodavac
+	OTCSagaStepTransferOwnership OTCSagaStep = "TRANSFER_OWNERSHIP" // vlasništvo preneseno na kupca
+	OTCSagaStepCompleted         OTCSagaStep = "COMPLETED"          // sve faze uspešne
 )
 
 // OTCSagaStatus je ukupan status SAGA egzekucije.
 type OTCSagaStatus string
 
 const (
-	OTCSagaStatusInProgress          OTCSagaStatus = "IN_PROGRESS"
-	OTCSagaStatusCompleted           OTCSagaStatus = "COMPLETED"
-	OTCSagaStatusFailed              OTCSagaStatus = "FAILED"
-	OTCSagaStatusCompensating        OTCSagaStatus = "COMPENSATING"
-	OTCSagaStatusCompensationFailed  OTCSagaStatus = "COMPENSATION_FAILED"
+	OTCSagaStatusInProgress         OTCSagaStatus = "IN_PROGRESS"
+	OTCSagaStatusCompleted          OTCSagaStatus = "COMPLETED"
+	OTCSagaStatusFailed             OTCSagaStatus = "FAILED"
+	OTCSagaStatusCompensating       OTCSagaStatus = "COMPENSATING"
+	OTCSagaStatusCompensationFailed OTCSagaStatus = "COMPENSATION_FAILED"
 )
 
 // OTCSagaExecution prati stanje jedne SAGA egzekucije u bazi.
 type OTCSagaExecution struct {
-	ID                   int64
-	ContractID           int64
-	CurrentStep          OTCSagaStep
-	Status               OTCSagaStatus
-	BuyerReservedAmount  float64   // iznos rezervisan na buyerAccount (za rollback korak 1)
-	ErrorMessage         string
-	RetryCount           int
-	InitiatedBy          int64
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	ID                  int64
+	ContractID          int64
+	CurrentStep         OTCSagaStep
+	Status              OTCSagaStatus
+	BuyerReservedAmount float64 // iznos rezervisan na buyerAccount (za rollback korak 1)
+	ErrorMessage        string
+	RetryCount          int
+	InitiatedBy         int64
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
 }
 
 // OTCSagaStepStatus je rezultat jednog koraka.
 type OTCSagaStepStatus string
 
 const (
-	OTCSagaStepStatusCompleted           OTCSagaStepStatus = "COMPLETED"
-	OTCSagaStepStatusFailed              OTCSagaStepStatus = "FAILED"
-	OTCSagaStepStatusCompensated         OTCSagaStepStatus = "COMPENSATED"
-	OTCSagaStepStatusCompensationFailed  OTCSagaStepStatus = "COMPENSATION_FAILED"
+	OTCSagaStepStatusCompleted          OTCSagaStepStatus = "COMPLETED"
+	OTCSagaStepStatusFailed             OTCSagaStepStatus = "FAILED"
+	OTCSagaStepStatusCompensated        OTCSagaStepStatus = "COMPENSATED"
+	OTCSagaStepStatusCompensationFailed OTCSagaStepStatus = "COMPENSATION_FAILED"
 )
 
 // OTCSagaStepLogEntry je jedan red u otc_saga_step_log.
@@ -109,8 +109,8 @@ type OTCContractListItem struct {
 
 // ExerciseOTCContractInput ulazni parametri za izvršavanje OTC ugovora.
 type ExerciseOTCContractInput struct {
-	ContractID  int64
-	CallerID    int64 // mora biti BuyerID ugovora
+	ContractID int64
+	CallerID   int64 // mora biti BuyerID ugovora
 }
 
 // ─── Greške ───────────────────────────────────────────────────────────────────

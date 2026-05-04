@@ -42,10 +42,10 @@ const (
 // ─── Tip i konstruktor ────────────────────────────────────────────────────────
 
 type otcContractService struct {
-	db             *gorm.DB
-	contractRepo   domain.OTCRepository
-	sagaRepo       domain.OTCSagaRepository
-	listingService domain.ListingService
+	db              *gorm.DB
+	contractRepo    domain.OTCRepository
+	sagaRepo        domain.OTCSagaRepository
+	listingService  domain.ListingService
 	exchangeService domain.ExchangeService
 }
 
@@ -208,8 +208,8 @@ func (s *otcContractService) stepReserveFunds(ctx context.Context, exec *domain.
 	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		// Provjera da kupac ima dovoljno raspoloživih sredstava.
 		var row struct {
-			Stanje    float64 `gorm:"column:stanje"`
-			Rezerv    float64 `gorm:"column:rezerv"`
+			Stanje float64 `gorm:"column:stanje"`
+			Rezerv float64 `gorm:"column:rezerv"`
 		}
 		if err := tx.Raw(`
 			SELECT stanje_racuna AS stanje, rezervisana_sredstva AS rezerv

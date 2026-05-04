@@ -133,7 +133,7 @@ func Load() (*Config, error) {
 		ListingRefreshIntervalMinutes: getEnvInt("LISTING_REFRESH_INTERVAL_MINUTES", 15),
 		ListingRequireLiveQuotes:      loadListingRequireLiveQuotes(),
 		StateRevenueAccountID:         getEnvInt64("STATE_REVENUE_ACCOUNT_ID", 0),
-		OwnBankID:                      getEnvInt64("BANK_ID", 1),
+		OwnBankID:                     getEnvInt64("BANK_ID", 1),
 	}, nil
 }
 
