@@ -36,3 +36,5 @@ rabbitmq_data/
 coverage.out
 coverage_filtered.out
 coverage_report.html
+# Added by code-review-graph
+.code-review-graph/
