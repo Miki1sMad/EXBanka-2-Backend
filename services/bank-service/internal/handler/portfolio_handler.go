@@ -96,21 +96,21 @@ func (h *PortfolioHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ─── GET /bank/portfolio/my ───────────────────────────────────────────────────
 
 type holdingResponse struct {
-	ListingID         string  `json:"listingId"`
-	Ticker            string  `json:"ticker"`
-	Name              string  `json:"name"`
-	ListingType       string  `json:"listingType"`
-	Quantity          int64   `json:"quantity"`
-	AvailableQuantity int64   `json:"availableQuantity"`
-	CurrentPrice      float64 `json:"currentPrice"`
-	AvgBuyPrice       float64 `json:"avgBuyPrice"`
-	Profit            float64 `json:"profit"`
-	LastModified      string  `json:"lastModified"`
-	AccountID         string  `json:"accountId"`
-	PublicShares         int    `json:"publicShares"`
-	PublicQuantity       int    `json:"publicQuantity"`
-	ReservedInContracts  int    `json:"reservedInContracts"`
-	DetailsJSON          string `json:"detailsJson"`
+	ListingID           string  `json:"listingId"`
+	Ticker              string  `json:"ticker"`
+	Name                string  `json:"name"`
+	ListingType         string  `json:"listingType"`
+	Quantity            int64   `json:"quantity"`
+	AvailableQuantity   int64   `json:"availableQuantity"`
+	CurrentPrice        float64 `json:"currentPrice"`
+	AvgBuyPrice         float64 `json:"avgBuyPrice"`
+	Profit              float64 `json:"profit"`
+	LastModified        string  `json:"lastModified"`
+	AccountID           string  `json:"accountId"`
+	PublicShares        int     `json:"publicShares"`
+	PublicQuantity      int     `json:"publicQuantity"`
+	ReservedInContracts int     `json:"reservedInContracts"`
+	DetailsJSON         string  `json:"detailsJson"`
 }
 
 type portfolioResponse struct {
@@ -130,7 +130,6 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 	ctx := r.Context()
 
 	isEmployee := claims.UserType == "EMPLOYEE" || claims.UserType == "ADMIN"
-
 
 	// ── 1. Aggregate net holdings from DONE and partially-filled CANCELED orders ──
 	var rows []holdingRow
@@ -398,21 +397,21 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 
 		pub := pubMap[row.ListingID]
 		holdings = append(holdings, holdingResponse{
-			ListingID:            strconv.FormatInt(row.ListingID, 10),
-			Ticker:               listing.Ticker,
-			Name:                 listing.Name,
-			ListingType:          string(listing.ListingType),
-			Quantity:             row.NetShares,
-			AvailableQuantity:    available,
-			CurrentPrice:         listing.Price,
-			AvgBuyPrice:          row.AvgBuyPrice,
-			Profit:               profit,
-			LastModified:         row.LastModified.UTC().Format(time.RFC3339),
-			AccountID:            strconv.FormatInt(row.AccountID, 10),
-			PublicShares:         pub,
-			PublicQuantity:       pub,
-			ReservedInContracts:  reservedMap[row.ListingID],
-			DetailsJSON:          listing.DetailsJSON,
+			ListingID:           strconv.FormatInt(row.ListingID, 10),
+			Ticker:              listing.Ticker,
+			Name:                listing.Name,
+			ListingType:         string(listing.ListingType),
+			Quantity:            row.NetShares,
+			AvailableQuantity:   available,
+			CurrentPrice:        listing.Price,
+			AvgBuyPrice:         row.AvgBuyPrice,
+			Profit:              profit,
+			LastModified:        row.LastModified.UTC().Format(time.RFC3339),
+			AccountID:           strconv.FormatInt(row.AccountID, 10),
+			PublicShares:        pub,
+			PublicQuantity:      pub,
+			ReservedInContracts: reservedMap[row.ListingID],
+			DetailsJSON:         listing.DetailsJSON,
 		})
 	}
 

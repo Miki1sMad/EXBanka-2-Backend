@@ -977,8 +977,9 @@ func (h *UserHandler) GetEmployeeByID(ctx context.Context, req *pb.GetEmployeeBy
 		return nil, status.Errorf(codes.Internal, "failed to fetch employee")
 	}
 
-	// ADMIN-type users su dozvoljeni za čitanje (ime/prezime/email);
-	// edit admina ide kroz poseban flow (UpdateEmployee blokira admina posebno).
+	if row.UserType == "ADMIN" {
+		return nil, status.Errorf(codes.PermissionDenied, "admin accounts cannot be fetched through this endpoint")
+	}
 
 	// ── 4. Fetch permissions ──────────────────────────────────────────────────
 	perms, err := h.querier.GetUserPermissions(ctx, row.ID)
