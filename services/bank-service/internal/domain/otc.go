@@ -276,8 +276,7 @@ type OTCRepository interface {
 	ListOffers(ctx context.Context, filter ListOTCOffersFilter) ([]OTCOfferListItem, error)
 	GetOfferListItem(ctx context.Context, id int64, callerID int64) (*OTCOfferListItem, error)
 
-	// ListMarketplace — sve akcije koje su drugi (≠ callerID) stavili u javni
-	// režim, agregirane po (seller, listing) sa preostalom raspoloživom količinom.
+	// ListMarketplace — klijentske akcije u javnom režimu (drugi klijenti ≠ callerID).
 	ListMarketplace(ctx context.Context, callerID int64) ([]OTCMarketplaceItem, error)
 
 	CreateContract(ctx context.Context, contract OTCContract) (*OTCContract, error)
@@ -300,6 +299,10 @@ type OTCRepository interface {
 
 	// UpdateContractStatus postavlja novi status ugovora i exercised_at (ako je EXERCISED).
 	UpdateContractStatus(ctx context.Context, id int64, status OTCContractStatus) error
+
+	// ExpireOverdueContracts bulk-ažurira sve VALID ugovore čiji je settlement_date
+	// prošao na status EXPIRED. Vraća broj ažuriranih redova.
+	ExpireOverdueContracts(ctx context.Context) (int, error)
 
 	// WithTx vraća instancu repoa koja radi nad datom *gorm.DB transakcijom.
 	WithTx(tx interface{}) OTCRepository
@@ -324,6 +327,9 @@ type OTCSagaRepository interface {
 
 	// LogStep upisuje jedan red u otc_saga_step_log.
 	LogStep(ctx context.Context, executionID int64, step OTCSagaStep, stepStatus OTCSagaStepStatus, errMsg string, attempt int) error
+
+	// DeleteExecution briše SAGA egzekuciju po ID-u (koristi se za retry posle FAILED/COMPENSATION_FAILED).
+	DeleteExecution(ctx context.Context, id int64) error
 
 	// WithTx vraća instancu koja radi nad datom *gorm.DB transakcijom.
 	WithTx(tx interface{}) OTCSagaRepository

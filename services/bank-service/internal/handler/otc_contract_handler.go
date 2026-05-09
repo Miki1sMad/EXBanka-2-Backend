@@ -111,7 +111,9 @@ func (h *OTCContractHandler) handleList(w http.ResponseWriter, r *http.Request, 
 	for _, it := range items {
 		it.SellerName = h.resolveUserName(r, it.SellerID)
 		it.SellerInfo = buildSellerInfo(it.SellerName, it.SellerBankName)
-		out = append(out, toContractListItemDTO(it))
+		dto := toContractListItemDTO(it)
+		dto.BuyerName = h.resolveUserName(r, it.BuyerID)
+		out = append(out, dto)
 	}
 	writeOTCJSON(w, http.StatusOK, out)
 }
@@ -126,7 +128,9 @@ func (h *OTCContractHandler) handleGet(w http.ResponseWriter, r *http.Request, i
 	}
 	item.SellerName = h.resolveUserName(r, item.SellerID)
 	item.SellerInfo = buildSellerInfo(item.SellerName, item.SellerBankName)
-	writeOTCJSON(w, http.StatusOK, toContractListItemDTO(*item))
+	dto := toContractListItemDTO(*item)
+	dto.BuyerName = h.resolveUserName(r, item.BuyerID)
+	writeOTCJSON(w, http.StatusOK, dto)
 }
 
 // ─── POST /api/otc/contracts/{id}/execute ─────────────────────────────────────
@@ -181,6 +185,7 @@ type contractListItemDTO struct {
 	SellerInfo     string  `json:"sellerInfo"`
 	SellerName     string  `json:"sellerName"`
 	SellerBankName string  `json:"sellerBankName"`
+	BuyerName      string  `json:"buyerName,omitempty"`
 }
 
 func toContractListItemDTO(it domain.OTCContractListItem) contractListItemDTO {
@@ -229,23 +234,23 @@ func (h *OTCContractHandler) authenticate(r *http.Request) (int64, error) {
 	return strconv.ParseInt(claims.Subject, 10, 64)
 }
 
-// resolveUserName pokušava da dohvati "Ime Prezime" za userID iz user-service.
-// Vraća prazan string ako userClient nije dostupan ili poziv ne uspe.
+// resolveUserName dohvata "Ime Prezime" za userID iz user-service.
+// Koristi service token (EMPLOYEE+SUPERVISOR) za gRPC poziv — korisnikov token
+// možda nema potrebne dozvole (CLIENT ne može gledati tuđe podatke).
 func (h *OTCContractHandler) resolveUserName(r *http.Request, userID int64) string {
 	if h.userClient == nil || userID == 0 {
 		return ""
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
-	if authHdr := r.Header.Get("Authorization"); authHdr != "" {
-		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", authHdr))
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+serviceToken(h.jwtSecret)))
+	if info, err := h.userClient.GetClientInfo(ctx, userID); err == nil && info != nil {
+		return strings.TrimSpace(info.FirstName + " " + info.LastName)
 	}
-	info, err := h.userClient.GetEmployeeInfo(ctx, userID)
-	if err != nil || info == nil {
-		// Pokušaj i GetClientInfo — seller može biti klijent, ne zaposleni.
-		return ""
+	if info, err := h.userClient.GetEmployeeInfo(ctx, userID); err == nil && info != nil {
+		return strings.TrimSpace(info.FirstName + " " + info.LastName)
 	}
-	return strings.TrimSpace(info.FirstName + " " + info.LastName)
+	return ""
 }
 
 // buildSellerInfo formatira "Ime Prezime, BankaNaziv" po specifikaciji.

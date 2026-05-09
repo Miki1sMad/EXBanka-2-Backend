@@ -19,29 +19,33 @@ import (
 	"banka-backend/services/bank-service/internal/transport"
 	auth "banka-backend/shared/auth"
 
+	"google.golang.org/grpc/metadata"
 	"gorm.io/gorm"
 )
 
 // BankProfitHandler opslužuje endpoint-e za prikaz profita banke.
 type BankProfitHandler struct {
-	db          *gorm.DB
-	fundService domain.InvestmentFundService
-	userClient  *transport.UserServiceClient // može biti nil
-	jwtSecret   string
+	db              *gorm.DB
+	fundService     domain.InvestmentFundService
+	exchangeService domain.ExchangeService
+	userClient      *transport.UserServiceClient // može biti nil
+	jwtSecret       string
 }
 
 // NewBankProfitHandler kreira handler sa zavisnostima.
 func NewBankProfitHandler(
 	db *gorm.DB,
 	fundService domain.InvestmentFundService,
+	exchangeService domain.ExchangeService,
 	userClient *transport.UserServiceClient,
 	jwtSecret string,
 ) *BankProfitHandler {
 	return &BankProfitHandler{
-		db:          db,
-		fundService: fundService,
-		userClient:  userClient,
-		jwtSecret:   jwtSecret,
+		db:              db,
+		fundService:     fundService,
+		exchangeService: exchangeService,
+		userClient:      userClient,
+		jwtSecret:       jwtSecret,
 	}
 }
 
@@ -137,7 +141,7 @@ SELECT
     ai.employee_id,
     ai.actuary_type,
     COALESCE(
-        SUM(GREATEST(0, (s.avg_sell_price - COALESCE(b.avg_buy_price, 0)) * s.sold_qty)),
+        SUM((s.avg_sell_price - COALESCE(b.avg_buy_price, 0)) * s.sold_qty),
         0
     ) AS total_profit
 FROM core_banking.actuary_info ai
@@ -171,15 +175,44 @@ func (h *BankProfitHandler) ActuaryPerformanceHandler(w http.ResponseWriter, r *
 		return
 	}
 
+	// Dohvati USD→RSD srednji kurs za konverziju profita iz USD u RSD.
+	usdRate := 1.0
+	if h.exchangeService != nil {
+		if rates, err := h.exchangeService.GetRates(ctx); err == nil {
+			for _, r := range rates {
+				if r.Oznaka == "USD" && r.Srednji > 0 {
+					usdRate = r.Srednji
+					break
+				}
+			}
+		}
+	}
+
+	// Batch-fetch all employees (includes ADMIN-type users that GetEmployeeByID rejects).
+	var employeeMap map[int64]*transport.ClientInfo
+	if h.userClient != nil {
+		batchCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+			batchCtx = metadata.NewOutgoingContext(batchCtx, metadata.Pairs("authorization", authHeader))
+		}
+		employeeMap, _ = h.userClient.GetAllEmployeesAsMap(batchCtx)
+		cancel()
+	}
+
 	out := make([]actuaryPerformanceDTO, 0, len(rows))
 	for _, row := range rows {
-		firstName, lastName := h.resolveEmployeeName(r, row.EmployeeID)
+		var firstName, lastName string
+		if info, ok := employeeMap[row.EmployeeID]; ok && info != nil {
+			firstName, lastName = info.FirstName, info.LastName
+		} else {
+			firstName, lastName = h.resolveEmployeeName(r, row.EmployeeID)
+		}
 		out = append(out, actuaryPerformanceDTO{
 			ID:      strconv.FormatInt(row.EmployeeID, 10),
 			Name:    firstName,
 			Surname: lastName,
 			Role:    row.ActuaryType,
-			Profit:  row.TotalProfit,
+			Profit:  row.TotalProfit * usdRate,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -219,9 +252,7 @@ type fundPosRow struct {
 
 // FundPositionsHandler — GET /bank/fund-positions
 //
-// Vraća sve pozicije banke (bankSystemUserID) u svim investicionim fondovima.
-// Specifikacija: "Svi investicioni fondovi u kojima banka ima udele" — filter
-// je po user_id banke (treasury), NE po manager_id supervizora koji gleda stranicu.
+// Vraća fondove u kojima banka (user_id=2) ima udele.
 func (h *BankProfitHandler) FundPositionsHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -318,6 +349,9 @@ func (h *BankProfitHandler) resolveEmployeeName(r *http.Request, employeeID int6
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", authHeader))
+	}
 	info, err := h.userClient.GetEmployeeInfo(ctx, employeeID)
 	if err != nil || info == nil {
 		return "", ""
@@ -331,6 +365,9 @@ func (h *BankProfitHandler) resolveClientName(r *http.Request, clientID int64) s
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", authHeader))
+	}
 	info, err := h.userClient.GetClientInfo(ctx, clientID)
 	if err != nil || info == nil {
 		return ""

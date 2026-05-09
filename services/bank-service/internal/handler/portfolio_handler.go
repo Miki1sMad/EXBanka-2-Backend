@@ -107,9 +107,10 @@ type holdingResponse struct {
 	Profit            float64 `json:"profit"`
 	LastModified      string  `json:"lastModified"`
 	AccountID         string  `json:"accountId"`
-	PublicShares      int     `json:"publicShares"`
-	PublicQuantity    int     `json:"publicQuantity"`
-	DetailsJSON       string  `json:"detailsJson"`
+	PublicShares         int    `json:"publicShares"`
+	PublicQuantity       int    `json:"publicQuantity"`
+	ReservedInContracts  int    `json:"reservedInContracts"`
+	DetailsJSON          string `json:"detailsJson"`
 }
 
 type portfolioResponse struct {
@@ -128,77 +129,142 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 
 	ctx := r.Context()
 
+	isEmployee := claims.UserType == "EMPLOYEE" || claims.UserType == "ADMIN"
+
+
 	// ── 1. Aggregate net holdings from DONE and partially-filled CANCELED orders ──
-	//
-	// Net shares per listing: sum of BUY quantities minus sum of SELL quantities.
-	// CANCELED BUY orders with partial fills are included: the executed portion is
-	// quantity - remaining_portions (remaining_portions is preserved on cancel).
-	// Average buy price: weighted average of executed_price from order_transactions
-	// for BUY orders; falls back to price_per_unit if no transactions recorded.
 	var rows []holdingRow
-	err = h.db.WithContext(ctx).Raw(`
-		WITH buy_agg AS (
-			SELECT
-				o.listing_id,
-				o.account_id,
-				SUM(
-					CASE
-						WHEN o.status = 'DONE'
-							THEN o.quantity
-						ELSE
-							(o.quantity - o.remaining_portions)
-					END
-				)                                  AS bought,
-				MAX(o.last_modified)               AS last_mod,
-				CASE
-					WHEN SUM(tx.qty) > 0
-					THEN SUM(tx.value) / SUM(tx.qty)
-					ELSE AVG(CAST(o.price_per_unit AS FLOAT))
-				END AS avg_buy
-			FROM core_banking.orders o
-			LEFT JOIN (
+	if isEmployee {
+		err = h.db.WithContext(ctx).Raw(`
+			WITH buy_agg AS (
 				SELECT
-					ot.order_id,
-					SUM(CAST(ot.executed_price AS FLOAT) * ot.executed_quantity) AS value,
-					SUM(ot.executed_quantity) AS qty
-				FROM core_banking.order_transactions ot
-				GROUP BY ot.order_id
-			) tx ON tx.order_id = o.id
-			WHERE o.user_id = ? AND o.direction = 'BUY'
-			  AND (
-			      (o.status = 'DONE' AND o.is_done = TRUE)
-			      OR (o.status = 'CANCELED' AND (o.quantity - o.remaining_portions) > 0)
-			  )
-			GROUP BY o.listing_id, o.account_id
-		),
-		sell_agg AS (
-			SELECT listing_id,
-				SUM(
+					o.listing_id,
+					0 AS account_id,
+					SUM(
+						CASE
+							WHEN o.status = 'DONE'
+								THEN o.quantity
+							ELSE
+								(o.quantity - o.remaining_portions)
+						END
+					)                                  AS bought,
+					MAX(o.last_modified)               AS last_mod,
 					CASE
-						WHEN status = 'DONE'
-							THEN quantity
-						ELSE
-							(quantity - remaining_portions)
-					END
-				) AS sold
-			FROM core_banking.orders
-			WHERE user_id = ? AND direction = 'SELL'
-			  AND (
-			      (status = 'DONE' AND is_done = TRUE)
-			      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
-			  )
-			GROUP BY listing_id
-		)
-		SELECT
-			b.listing_id,
-			b.account_id,
-			(b.bought - COALESCE(s.sold, 0)) AS net_shares,
-			COALESCE(b.avg_buy, 0)           AS avg_buy_price,
-			b.last_mod                        AS last_modified
-		FROM buy_agg b
-		LEFT JOIN sell_agg s ON s.listing_id = b.listing_id
-		WHERE (b.bought - COALESCE(s.sold, 0)) > 0
-	`, userID, userID).Scan(&rows).Error
+						WHEN SUM(tx.qty) > 0
+						THEN SUM(tx.value) / SUM(tx.qty)
+						ELSE AVG(CAST(o.price_per_unit AS FLOAT))
+					END AS avg_buy
+				FROM core_banking.orders o
+				LEFT JOIN (
+					SELECT
+						ot.order_id,
+						SUM(CAST(ot.executed_price AS FLOAT) * ot.executed_quantity) AS value,
+						SUM(ot.executed_quantity) AS qty
+					FROM core_banking.order_transactions ot
+					GROUP BY ot.order_id
+				) tx ON tx.order_id = o.id
+				WHERE o.user_id IN (SELECT employee_id FROM core_banking.actuary_info)
+				  AND o.direction = 'BUY'
+				  AND (
+				      (o.status = 'DONE' AND o.is_done = TRUE)
+				      OR (o.status = 'CANCELED' AND (o.quantity - o.remaining_portions) > 0)
+				  )
+				GROUP BY o.listing_id
+			),
+			sell_agg AS (
+				SELECT listing_id,
+					SUM(
+						CASE
+							WHEN status = 'DONE'
+								THEN quantity
+							ELSE
+								(quantity - remaining_portions)
+						END
+					) AS sold
+				FROM core_banking.orders
+				WHERE user_id IN (SELECT employee_id FROM core_banking.actuary_info)
+				  AND direction = 'SELL'
+				  AND (
+				      (status = 'DONE' AND is_done = TRUE)
+				      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
+				  )
+				GROUP BY listing_id
+			)
+			SELECT
+				b.listing_id,
+				b.account_id,
+				(b.bought - COALESCE(s.sold, 0)) AS net_shares,
+				COALESCE(b.avg_buy, 0)           AS avg_buy_price,
+				b.last_mod                        AS last_modified
+			FROM buy_agg b
+			LEFT JOIN sell_agg s ON s.listing_id = b.listing_id
+			WHERE (b.bought - COALESCE(s.sold, 0)) > 0
+		`).Scan(&rows).Error
+	} else {
+		err = h.db.WithContext(ctx).Raw(`
+			WITH buy_agg AS (
+				SELECT
+					o.listing_id,
+					o.account_id,
+					SUM(
+						CASE
+							WHEN o.status = 'DONE'
+								THEN o.quantity
+							ELSE
+								(o.quantity - o.remaining_portions)
+						END
+					)                                  AS bought,
+					MAX(o.last_modified)               AS last_mod,
+					CASE
+						WHEN SUM(tx.qty) > 0
+						THEN SUM(tx.value) / SUM(tx.qty)
+						ELSE AVG(CAST(o.price_per_unit AS FLOAT))
+					END AS avg_buy
+				FROM core_banking.orders o
+				LEFT JOIN (
+					SELECT
+						ot.order_id,
+						SUM(CAST(ot.executed_price AS FLOAT) * ot.executed_quantity) AS value,
+						SUM(ot.executed_quantity) AS qty
+					FROM core_banking.order_transactions ot
+					GROUP BY ot.order_id
+				) tx ON tx.order_id = o.id
+				WHERE o.user_id = ? AND o.direction = 'BUY'
+				  AND (
+				      (o.status = 'DONE' AND o.is_done = TRUE)
+				      OR (o.status = 'CANCELED' AND (o.quantity - o.remaining_portions) > 0)
+				  )
+				GROUP BY o.listing_id, o.account_id
+			),
+			sell_agg AS (
+				SELECT listing_id,
+					SUM(
+						CASE
+							WHEN status = 'DONE'
+								THEN quantity
+							ELSE
+								(quantity - remaining_portions)
+						END
+					) AS sold
+				FROM core_banking.orders
+				WHERE user_id = ? AND direction = 'SELL'
+				  AND (
+				      (status = 'DONE' AND is_done = TRUE)
+				      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
+				  )
+				GROUP BY listing_id
+			)
+			SELECT
+				b.listing_id,
+				b.account_id,
+				(b.bought - COALESCE(s.sold, 0)) AS net_shares,
+				COALESCE(b.avg_buy, 0)           AS avg_buy_price,
+				b.last_mod                        AS last_modified
+			FROM buy_agg b
+			LEFT JOIN sell_agg s ON s.listing_id = b.listing_id
+			WHERE (b.bought - COALESCE(s.sold, 0)) > 0
+		`, userID, userID).Scan(&rows).Error
+	}
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "query error: "+err.Error())
 		return
@@ -210,14 +276,26 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 		ActiveSell int64 `gorm:"column:active_sell"`
 	}
 	var activeSellRows []activeSellRow
-	h.db.WithContext(ctx).Raw(`
-		SELECT listing_id, SUM(quantity) AS active_sell
-		FROM core_banking.orders
-		WHERE user_id = ? AND direction = 'SELL'
-		  AND status IN ('PENDING', 'APPROVED')
-		  AND is_done = FALSE
-		GROUP BY listing_id
-	`, userID).Scan(&activeSellRows)
+	if isEmployee {
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(quantity) AS active_sell
+			FROM core_banking.orders
+			WHERE user_id IN (SELECT employee_id FROM core_banking.actuary_info)
+			  AND direction = 'SELL'
+			  AND status IN ('PENDING', 'APPROVED')
+			  AND is_done = FALSE
+			GROUP BY listing_id
+		`).Scan(&activeSellRows)
+	} else {
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(quantity) AS active_sell
+			FROM core_banking.orders
+			WHERE user_id = ? AND direction = 'SELL'
+			  AND status IN ('PENDING', 'APPROVED')
+			  AND is_done = FALSE
+			GROUP BY listing_id
+		`, userID).Scan(&activeSellRows)
+	}
 	activeSellMap := make(map[int64]int64, len(activeSellRows))
 	for _, a := range activeSellRows {
 		activeSellMap[a.ListingID] = a.ActiveSell
@@ -229,22 +307,58 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 		Total     int   `gorm:"column:total"`
 	}
 	var pubRows []pubRow
-	h.db.WithContext(ctx).Raw(`
-		SELECT listing_id, SUM(quantity) AS total
-		FROM core_banking.public_shares
-		WHERE user_id = ?
-		GROUP BY listing_id
-	`, userID).Scan(&pubRows)
+	if isEmployee {
+		// All public shares published by any employee (across all users).
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(quantity) AS total
+			FROM core_banking.public_shares
+			GROUP BY listing_id
+		`).Scan(&pubRows)
+	} else {
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(quantity) AS total
+			FROM core_banking.public_shares
+			WHERE user_id = ?
+			GROUP BY listing_id
+		`, userID).Scan(&pubRows)
+	}
 	pubMap := make(map[int64]int, len(pubRows))
 	for _, p := range pubRows {
 		pubMap[p.ListingID] = p.Total
 	}
 
+	// ── 3.5. Load reserved amounts from active OTC contracts ─────────────────
+	type reservedRow struct {
+		ListingID int64 `gorm:"column:listing_id"`
+		Reserved  int   `gorm:"column:reserved"`
+	}
+	var reservedRows []reservedRow
+	if isEmployee {
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(amount) AS reserved
+			FROM core_banking.otc_contracts
+			WHERE seller_id IN (SELECT employee_id FROM core_banking.actuary_info)
+			  AND status = 'VALID' AND settlement_date >= NOW()
+			GROUP BY listing_id
+		`).Scan(&reservedRows)
+	} else {
+		h.db.WithContext(ctx).Raw(`
+			SELECT listing_id, SUM(amount) AS reserved
+			FROM core_banking.otc_contracts
+			WHERE seller_id = ? AND status = 'VALID' AND settlement_date >= NOW()
+			GROUP BY listing_id
+		`, userID).Scan(&reservedRows)
+	}
+	reservedMap := make(map[int64]int, len(reservedRows))
+	for _, rv := range reservedRows {
+		reservedMap[rv.ListingID] = rv.Reserved
+	}
+
 	// ── 4. Load tax data (paid this year, unpaid this month) ─────────────────
-	// Delegirano na service.TaxService — jedinstveni izvor istine za tax_records.
-	now := time.Now()
+	// Tax applies only to individual clients; the bank's trezor account is exempt.
 	var taxPaid, taxUnpaid float64
-	if h.taxService != nil {
+	if !isEmployee && h.taxService != nil {
+		now := time.Now()
 		if v, err := h.taxService.UserTaxPaidForYear(ctx, userID, now.Year()); err == nil {
 			taxPaid = v
 		}
@@ -284,20 +398,21 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 
 		pub := pubMap[row.ListingID]
 		holdings = append(holdings, holdingResponse{
-			ListingID:         strconv.FormatInt(row.ListingID, 10),
-			Ticker:            listing.Ticker,
-			Name:              listing.Name,
-			ListingType:       string(listing.ListingType),
-			Quantity:          row.NetShares,
-			AvailableQuantity: available,
-			CurrentPrice:      listing.Price,
-			AvgBuyPrice:       row.AvgBuyPrice,
-			Profit:            profit,
-			LastModified:      row.LastModified.UTC().Format(time.RFC3339),
-			AccountID:         strconv.FormatInt(row.AccountID, 10),
-			PublicShares:      pub,
-			PublicQuantity:    pub,
-			DetailsJSON:       listing.DetailsJSON,
+			ListingID:            strconv.FormatInt(row.ListingID, 10),
+			Ticker:               listing.Ticker,
+			Name:                 listing.Name,
+			ListingType:          string(listing.ListingType),
+			Quantity:             row.NetShares,
+			AvailableQuantity:    available,
+			CurrentPrice:         listing.Price,
+			AvgBuyPrice:          row.AvgBuyPrice,
+			Profit:               profit,
+			LastModified:         row.LastModified.UTC().Format(time.RFC3339),
+			AccountID:            strconv.FormatInt(row.AccountID, 10),
+			PublicShares:         pub,
+			PublicQuantity:       pub,
+			ReservedInContracts:  reservedMap[row.ListingID],
+			DetailsJSON:          listing.DetailsJSON,
 		})
 	}
 
@@ -339,37 +454,71 @@ func (h *PortfolioHandler) publishShares(w http.ResponseWriter, r *http.Request,
 	}
 
 	ctx := r.Context()
+	isEmployee := claims.UserType == "EMPLOYEE" || claims.UserType == "ADMIN"
 
-	// Verify user actually holds at least `quantity` of this listing.
-	// Include CANCELED BUY orders with partial fills (executed = quantity - remaining_portions).
+	// Verify the portfolio holds at least `quantity` of this listing.
+	// For employees the check spans all actuaries (shared bank portfolio).
 	var netShares int64
-	h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(
-			CASE
-				WHEN direction = 'BUY'  AND status = 'DONE'
-					THEN quantity * contract_size
-				WHEN direction = 'BUY'  AND status = 'CANCELED'
-					THEN (quantity - remaining_portions) * contract_size
-				WHEN direction = 'SELL' AND status = 'DONE'
-					THEN -(quantity * contract_size)
-				WHEN direction = 'SELL' AND status = 'CANCELED'
-					THEN -((quantity - remaining_portions) * contract_size)
-				ELSE 0
-			END
-		), 0)
-		FROM core_banking.orders
-		WHERE user_id = ? AND listing_id = ?
-		  AND (
-		      (status = 'DONE' AND is_done = TRUE)
-		      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
-		  )
-	`, userID, listingID).Scan(&netShares)
+	if isEmployee {
+		h.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(SUM(
+				CASE
+					WHEN direction = 'BUY'  AND status = 'DONE'
+						THEN quantity * contract_size
+					WHEN direction = 'BUY'  AND status = 'CANCELED'
+						THEN (quantity - remaining_portions) * contract_size
+					WHEN direction = 'SELL' AND status = 'DONE'
+						THEN -(quantity * contract_size)
+					WHEN direction = 'SELL' AND status = 'CANCELED'
+						THEN -((quantity - remaining_portions) * contract_size)
+					ELSE 0
+				END
+			), 0)
+			FROM core_banking.orders
+			WHERE user_id IN (SELECT employee_id FROM core_banking.actuary_info)
+			  AND listing_id = ?
+			  AND (
+			      (status = 'DONE' AND is_done = TRUE)
+			      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
+			  )
+		`, listingID).Scan(&netShares)
+	} else {
+		h.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(SUM(
+				CASE
+					WHEN direction = 'BUY'  AND status = 'DONE'
+						THEN quantity * contract_size
+					WHEN direction = 'BUY'  AND status = 'CANCELED'
+						THEN (quantity - remaining_portions) * contract_size
+					WHEN direction = 'SELL' AND status = 'DONE'
+						THEN -(quantity * contract_size)
+					WHEN direction = 'SELL' AND status = 'CANCELED'
+						THEN -((quantity - remaining_portions) * contract_size)
+					ELSE 0
+				END
+			), 0)
+			FROM core_banking.orders
+			WHERE user_id = ? AND listing_id = ?
+			  AND (
+			      (status = 'DONE' AND is_done = TRUE)
+			      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
+			  )
+		`, userID, listingID).Scan(&netShares)
+	}
 
 	var alreadyPublic int
-	h.db.WithContext(ctx).Raw(`
-		SELECT COALESCE(SUM(quantity),0) FROM core_banking.public_shares
-		WHERE user_id = ? AND listing_id = ?
-	`, userID, listingID).Scan(&alreadyPublic)
+	if isEmployee {
+		h.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(SUM(quantity),0) FROM core_banking.public_shares
+			WHERE user_id IN (SELECT employee_id FROM core_banking.actuary_info)
+			  AND listing_id = ?
+		`, listingID).Scan(&alreadyPublic)
+	} else {
+		h.db.WithContext(ctx).Raw(`
+			SELECT COALESCE(SUM(quantity),0) FROM core_banking.public_shares
+			WHERE user_id = ? AND listing_id = ?
+		`, userID, listingID).Scan(&alreadyPublic)
+	}
 
 	available := int(netShares) - alreadyPublic
 	if req.Quantity > available {

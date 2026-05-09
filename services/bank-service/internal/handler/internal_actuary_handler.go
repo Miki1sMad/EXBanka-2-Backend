@@ -109,8 +109,11 @@ func (h *InternalActuaryHandler) handleDelete(w http.ResponseWriter, r *http.Req
 
 	// Utvrdi da li je zaposleni supervizor pre brisanja — ako jeste,
 	// menadžment fondova mora preći na admina koji vrši operaciju.
+	// Primarno: proveriti actuary_info red. Rezervno: koristiti actuaryType query param
+	// koji šalje user-service (potrebno za seeded/migrated korisnike bez actuary_info reda).
 	existing, lookupErr := h.service.GetActuaryByEmployeeID(r.Context(), employeeID)
-	isSupervisorBeingRemoved := lookupErr == nil && existing.ActuaryType == domain.ActuaryTypeSupervisor
+	isSupervisorBeingRemoved := (lookupErr == nil && existing.ActuaryType == domain.ActuaryTypeSupervisor) ||
+		(lookupErr != nil && r.URL.Query().Get("actuaryType") == string(domain.ActuaryTypeSupervisor))
 
 	if err := h.service.DeleteActuaryForEmployee(r.Context(), employeeID); err != nil {
 		log.Printf("[internal-actuary] delete employee_id=%d: %v", employeeID, err)

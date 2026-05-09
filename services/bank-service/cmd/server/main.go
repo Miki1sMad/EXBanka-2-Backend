@@ -235,14 +235,14 @@ func main() {
 	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret)
 
 	// ── BankProfitHandler — actuary-performance + fund-positions (Celina 4) ──
-	bankProfitHandler := handler.NewBankProfitHandler(db, investmentFundService, userClient, cfg.JWTAccessSecret)
+	bankProfitHandler := handler.NewBankProfitHandler(db, investmentFundService, exchangeService, userClient, cfg.JWTAccessSecret)
 
 	// ── OTC (Faza 2) ─────────────────────────────────────────────────────────
 	// PaymentService igra ulogu OTCPaymentPort — premija ide kroz auditovanu
 	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
 	otcRepo := repository.NewOTCRepository(db)
 	otcService := service.NewOTCService(db, otcRepo, paymentService)
-	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID)
+	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID, userClient)
 
 	// ── OTC Contracts & SAGA (Celina 4) ──────────────────────────────────────
 	// OTCContractService orkestira SAGA tok za izvršavanje ("Iskoristi") OTC ugovora.
@@ -364,6 +364,10 @@ func main() {
 	// ── 7e2. Daily-ish scan: PENDING futures orders past settlement → DECLINED ─
 	futuresExpiryWorker := worker.NewFuturesPendingExpiryWorker(orderRepo, listingRepo, tradingService)
 	go futuresExpiryWorker.Start(ctx)
+
+	// ── 7e3. Daily scan: VALID OTC contracts past settlement_date → EXPIRED ───
+	otcContractExpiryWorker := worker.NewOTCContractExpiryWorker(otcRepo)
+	go otcContractExpiryWorker.Start(ctx)
 
 	// ── 7c. Start ListingRefresherWorker (osvežava cene hartija periodično) ────
 	listingRefreshInterval := time.Duration(cfg.ListingRefreshIntervalMinutes) * time.Minute

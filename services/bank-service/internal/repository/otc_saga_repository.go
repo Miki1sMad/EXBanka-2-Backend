@@ -164,6 +164,15 @@ func (r *otcSagaRepository) IncrementRetry(ctx context.Context, id int64) (int, 
 	return exec.RetryCount, nil
 }
 
+// DeleteExecution briše SAGA egzekuciju po ID-u (za retry posle FAILED/COMPENSATION_FAILED).
+func (r *otcSagaRepository) DeleteExecution(ctx context.Context, id int64) error {
+	if err := r.db.WithContext(ctx).
+		Delete(&otcSagaExecutionModel{}, id).Error; err != nil {
+		return fmt.Errorf("delete saga execution: %w", err)
+	}
+	return nil
+}
+
 // LogStep upisuje jedan red u otc_saga_step_log.
 func (r *otcSagaRepository) LogStep(ctx context.Context, executionID int64, step domain.OTCSagaStep, stepStatus domain.OTCSagaStepStatus, errMsg string, attempt int) error {
 	m := otcSagaStepLogModel{

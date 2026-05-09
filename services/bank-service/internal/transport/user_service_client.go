@@ -105,6 +105,32 @@ func (c *UserServiceClient) GetEmployeeInfo(ctx context.Context, employeeID int6
 	}, nil
 }
 
+// GetAllEmployeesAsMap fetches all employees (including ADMIN-type users, which
+// GetEmployeeByID refuses to return) and returns them keyed by user ID.
+// Fetches up to 500 employees in one call — sufficient for any realistic bank.
+func (c *UserServiceClient) GetAllEmployeesAsMap(ctx context.Context) (map[int64]*ClientInfo, error) {
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		ctx = metadata.NewOutgoingContext(ctx, md)
+	}
+	resp, err := c.client.GetAllEmployees(ctx, &userv1.GetAllEmployeesRequest{
+		Page:     1,
+		PageSize: 500,
+	})
+	if err != nil {
+		return nil, err
+	}
+	m := make(map[int64]*ClientInfo, len(resp.GetEmployees()))
+	for _, ep := range resp.GetEmployees() {
+		u := ep.GetUser()
+		m[u.GetId()] = &ClientInfo{
+			FirstName: u.GetFirstName(),
+			LastName:  u.GetLastName(),
+			Email:     u.GetEmail(),
+		}
+	}
+	return m, nil
+}
+
 // GetClientName calls GetClientByID on user-service and returns the client's
 // first and last name. The caller should use a context with an appropriate timeout.
 //
