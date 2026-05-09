@@ -97,11 +97,12 @@ type FundSecurityDetail struct {
 	InitialMarginCost float64 // za prikaz na detalju (spec: initialMarginCost)
 }
 
-// BankAccountItem je projekcija jednog RSD računa banke (vlasnik_id=2 / trezor).
+// BankAccountItem je projekcija jednog računa banke (vlasnik_id=2 / trezor).
 type BankAccountItem struct {
 	ID                  int64
 	BrojRacuna          string
 	NazivRacuna         string
+	ValutaOznaka        string
 	StanjeRacuna        float64
 	RezervovanaSredstva float64
 	RaspolozivoStanje   float64
@@ -132,6 +133,9 @@ type InvestmentFundRepository interface {
 	// ISKLJUČUJUĆI račune koji su namenski povezani sa investicionim fondovima.
 	// Koristi supervizor pri "Investiraj u ime banke" i pri kupovini hartija u ime banke.
 	ListBankRSDAccounts(ctx context.Context) ([]BankAccountItem, error)
+	// ListBankAllAccounts vraća sve aktivne račune banke bez filtera valute.
+	// Koristi se tamo gde zaposleni bira u kojoj valuti prima premiju (OTC).
+	ListBankAllAccounts(ctx context.Context) ([]BankAccountItem, error)
 
 	// List vraća sve fondove (bez filtriranja — filtriranje je u servisnom sloju).
 	List(ctx context.Context) ([]InvestmentFund, error)

@@ -72,11 +72,6 @@ func (s *otcService) CreateOffer(ctx context.Context, in domain.CreateOTCOfferIn
 	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		repo := s.repo.WithTx(tx)
 
-		// Provera vlasništva računa kupca (i da postoji).
-		if _, err := s.validateAccountOwnership(ctx, repo, in.BuyerAccountID, in.BuyerID); err != nil {
-			return err
-		}
-
 		// Capacity check: prodavac mora imati dovoljno akcija u javnom režimu
 		// (minus aktivne PENDING ponude i VALID ugovori).
 		avail, err := repo.AvailablePublicShares(ctx, in.SellerID, in.ListingID, 0)
@@ -151,9 +146,6 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 		// račun za premiju. Kupac NE sme dirati seller_account_id.
 		newSellerAcc := offer.SellerAccountID
 		if in.CallerID == offer.SellerID && in.SellerAccountID != nil {
-			if _, err := s.validateAccountOwnership(ctx, repo, *in.SellerAccountID, offer.SellerID); err != nil {
-				return err
-			}
 			newSellerAcc = in.SellerAccountID
 		}
 
@@ -229,9 +221,6 @@ func (s *otcService) AcceptOffer(ctx context.Context, in domain.AcceptOTCOfferIn
 		if in.SellerAccountID != nil {
 			if in.CallerID != offer.SellerID {
 				return domain.ErrOTCNotCounterparty
-			}
-			if _, err := s.validateAccountOwnership(ctx, repo, *in.SellerAccountID, offer.SellerID); err != nil {
-				return err
 			}
 			sellerAcc = in.SellerAccountID
 		}
@@ -353,7 +342,7 @@ func (s *otcService) GetOffer(ctx context.Context, offerID, callerID int64) (*do
 	return s.repo.GetOfferListItem(ctx, offerID, callerID)
 }
 
-// ListMarketplace — sve "javno dostupne" akcije za OTC kupovinu (drugi prodavci).
+// ListMarketplace — klijentske akcije u javnom režimu za OTC kupovinu.
 func (s *otcService) ListMarketplace(ctx context.Context, callerID int64) ([]domain.OTCMarketplaceItem, error) {
 	return s.repo.ListMarketplace(ctx, callerID)
 }

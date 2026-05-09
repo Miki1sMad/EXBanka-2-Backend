@@ -107,7 +107,7 @@ func (s *otcContractService) enrichContract(ctx context.Context, c domain.OTCCon
 		item.Ticker = listing.Ticker
 		item.StockName = listing.Name
 		item.CurrentPrice = listing.Price
-		// Profit = (tržišna cena - strike) × količina - premija (sva u USD, prikaz na FE-u)
+		// Profit = (tržišna cena - strike) × količina - premija (ukupan iznos za ugovor)
 		item.Profit = (listing.Price-c.StrikePrice)*float64(c.Amount) - c.Premium
 	}
 
@@ -136,17 +136,34 @@ func (s *otcContractService) ExerciseContract(ctx context.Context, in domain.Exe
 		return nil, domain.ErrOTCContractExpired
 	}
 
-	// ── Sprečavanje dvostrukog pokretanja ─────────────────────────────────────
+	// ── Sprečavanje dvostrukog pokretanja / čišćenje neuspele egzekucije ────────
 	existing, err := s.sagaRepo.GetExecutionByContractID(ctx, in.ContractID)
 	if err != nil {
 		return nil, fmt.Errorf("provjera SAGA stanja: %w", err)
 	}
-	if existing != nil && existing.Status == domain.OTCSagaStatusInProgress {
-		return nil, domain.ErrOTCSagaAlreadyRunning
+	if existing != nil {
+		if existing.Status == domain.OTCSagaStatusInProgress {
+			return nil, domain.ErrOTCSagaAlreadyRunning
+		}
+		// Prethodni pokušaj je završio sa FAILED ili COMPENSATION_FAILED — obriši ga
+		// da UNIQUE constraint na contract_id ne blokira novi pokušaj.
+		if err := s.sagaRepo.DeleteExecution(ctx, existing.ID); err != nil {
+			return nil, fmt.Errorf("brisanje stare SAGA egzekucije: %w", err)
+		}
 	}
 
-	// Izračunaj ukupan iznos koji kupac treba platiti (u USD jer je račun u USD/RSD).
-	totalCost := float64(contract.Amount) * contract.StrikePrice
+	// Učitaj valutu kupčevog računa pa konvertuj strikePrice iz USD u tu valutu.
+	var buyerCurrency string
+	s.db.WithContext(ctx).Raw(`
+		SELECT v.oznaka FROM core_banking.racun r
+		JOIN core_banking.valuta v ON v.id = r.id_valute
+		WHERE r.id = ?
+	`, contract.BuyerAccountID).Scan(&buyerCurrency)
+	if buyerCurrency == "" {
+		buyerCurrency = "RSD"
+	}
+	rate := s.usdToTargetRate(ctx, buyerCurrency)
+	totalCost := float64(contract.Amount) * contract.StrikePrice * rate
 
 	// ── Kreiraj SAGA execution red u bazi ────────────────────────────────────
 	exec, err := s.sagaRepo.CreateExecution(ctx, in.ContractID, in.CallerID, totalCost)
@@ -238,31 +255,45 @@ func (s *otcContractService) stepReserveFunds(ctx context.Context, exec *domain.
 // stepReserveSecurities smanjuje količinu u public_shares prodavca.
 func (s *otcContractService) stepReserveSecurities(ctx context.Context, exec *domain.OTCSagaExecution, c *domain.OTCContract) error {
 	txErr := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// Provjera da prodavac ima dovoljno akcija u public_shares.
+		// Lock rows first (PostgreSQL forbids FOR UPDATE with aggregate functions).
+		var lockedIDs []int64
+		if err := tx.Raw(`
+			SELECT id FROM core_banking.public_shares
+			WHERE user_id = ? AND listing_id = ? FOR UPDATE
+		`, c.SellerID, c.ListingID).Scan(&lockedIDs).Error; err != nil {
+			return fmt.Errorf("lock public_shares: %w", err)
+		}
+		// Read sum — rows are already locked in this transaction.
 		var pubQty int64
 		if err := tx.Raw(`
 			SELECT COALESCE(SUM(quantity), 0)
 			FROM core_banking.public_shares
-			WHERE user_id = ? AND listing_id = ? FOR UPDATE
+			WHERE user_id = ? AND listing_id = ?
 		`, c.SellerID, c.ListingID).Scan(&pubQty).Error; err != nil {
-			return fmt.Errorf("lock public_shares: %w", err)
+			return fmt.Errorf("read public_shares: %w", err)
 		}
 		if pubQty < int64(c.Amount) {
 			return domain.ErrOTCInsufficientCapacity
 		}
-		// Smanji količinu; briši red ako pada na 0.
-		if err := tx.Exec(`
-			UPDATE core_banking.public_shares
-			SET quantity = quantity - ?
-			WHERE user_id = ? AND listing_id = ?
-		`, c.Amount, c.SellerID, c.ListingID).Error; err != nil {
-			return fmt.Errorf("deduct public_shares: %w", err)
-		}
-		// Počisti redove sa quantity <= 0.
-		return tx.Exec(`
+		// Briši red ako se troši cela objavljena količina (UPDATE na 0 bi narušio
+		// CHECK quantity > 0); inače umanji — rezultat ostaje pozitivan.
+		res := tx.Exec(`
 			DELETE FROM core_banking.public_shares
-			WHERE user_id = ? AND listing_id = ? AND quantity <= 0
-		`, c.SellerID, c.ListingID).Error
+			WHERE user_id = ? AND listing_id = ? AND quantity = ?
+		`, c.SellerID, c.ListingID, c.Amount)
+		if res.Error != nil {
+			return fmt.Errorf("deduct public_shares: %w", res.Error)
+		}
+		if res.RowsAffected == 0 {
+			if err := tx.Exec(`
+				UPDATE core_banking.public_shares
+				SET quantity = quantity - ?
+				WHERE user_id = ? AND listing_id = ?
+			`, c.Amount, c.SellerID, c.ListingID).Error; err != nil {
+				return fmt.Errorf("deduct public_shares: %w", err)
+			}
+		}
+		return nil
 	})
 
 	return s.recordStep(ctx, exec, domain.OTCSagaStepReserveSecurities, txErr)
@@ -540,10 +571,16 @@ func (s *otcContractService) compensateTransferFunds(ctx context.Context, exec *
 			INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
 			VALUES (?, 'ISPLATA', ?, ?, ?, 'IZVRSEN')
 		`, c.SellerAccountID, exec.BuyerReservedAmount, desc, now)
-		// Credit kupca (vraćamo mu sredstva).
+		// Credit kupca: vraćamo i stanje i rezervu.
+		// Step 3 je smanjio OBA polja za BuyerReservedAmount; ovde ih vraćamo da
+		// compensateReserveFunds može korektno poništiti Step 1 (koji je samo
+		// povećao rezervu). Bez ovoga kupac bi izgubio eventualne prethodeće rezerve.
 		if err := tx.Exec(`
-			UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ? AND status = 'AKTIVAN'
-		`, exec.BuyerReservedAmount, c.BuyerAccountID).Error; err != nil {
+			UPDATE core_banking.racun
+			SET stanje_racuna        = stanje_racuna        + ?,
+			    rezervisana_sredstva = rezervisana_sredstva + ?
+			WHERE id = ? AND status = 'AKTIVAN'
+		`, exec.BuyerReservedAmount, exec.BuyerReservedAmount, c.BuyerAccountID).Error; err != nil {
 			return fmt.Errorf("rollback credit buyer: %w", err)
 		}
 		_ = tx.Exec(`
@@ -585,16 +622,32 @@ func (s *otcContractService) recordStep(ctx context.Context, exec *domain.OTCSag
 
 // usdToRSDRate vraća srednji kurs USD→RSD; fallback 1.0.
 func (s *otcContractService) usdToRSDRate(ctx context.Context) float64 {
+	return s.usdToTargetRate(ctx, "RSD")
+}
+
+// usdToTargetRate konvertuje 1 USD u targetCurrency koristeći srednje kurseve.
+// Ako kurs nije dostupan, vraća 1.0 kao fallback.
+func (s *otcContractService) usdToTargetRate(ctx context.Context, targetCurrency string) float64 {
+	if targetCurrency == "USD" {
+		return 1.0
+	}
 	rates, err := s.exchangeService.GetRates(ctx)
 	if err != nil {
 		return 1.0
 	}
+	rateVsRSD := make(map[string]float64)
+	rateVsRSD["RSD"] = 1.0
 	for _, r := range rates {
-		if r.Oznaka == "USD" && r.Srednji > 0 {
-			return r.Srednji
+		if r.Srednji > 0 {
+			rateVsRSD[r.Oznaka] = r.Srednji
 		}
 	}
-	return 1.0
+	usdRSD := rateVsRSD["USD"]
+	targetRSD := rateVsRSD[targetCurrency]
+	if usdRSD == 0 || targetRSD == 0 {
+		return 1.0
+	}
+	return usdRSD / targetRSD
 }
 
 // ─── Provjera da implementira interface (compile-time guard) ──────────────────

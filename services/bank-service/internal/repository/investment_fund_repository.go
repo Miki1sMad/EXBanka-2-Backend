@@ -129,39 +129,55 @@ type bankAccountRow struct {
 	ID                  int64   `gorm:"column:id"`
 	BrojRacuna          string  `gorm:"column:broj_racuna"`
 	NazivRacuna         string  `gorm:"column:naziv_racuna"`
+	ValutaOznaka        string  `gorm:"column:valuta_oznaka"`
 	StanjeRacuna        float64 `gorm:"column:stanje_racuna"`
 	RezervovanaSredstva float64 `gorm:"column:rezervisana_sredstva"`
 }
 
-func (r *investmentFundRepository) ListBankRSDAccounts(ctx context.Context) ([]domain.BankAccountItem, error) {
-	var rows []bankAccountRow
-	err := r.db.WithContext(ctx).Raw(`
-		SELECT r.id, r.broj_racuna, r.naziv_racuna, r.stanje_racuna, r.rezervisana_sredstva
-		FROM core_banking.racun r
-		JOIN core_banking.valuta v ON v.id = r.id_valute
-		WHERE r.id_vlasnika = 2
-		  AND r.status = 'AKTIVAN'
-		  AND v.oznaka = 'RSD'
-		  AND r.id NOT IN (
-		      SELECT account_id FROM core_banking.investment_funds WHERE account_id IS NOT NULL
-		  )
-		ORDER BY r.id ASC
-	`).Scan(&rows).Error
-	if err != nil {
-		return nil, err
-	}
+const bankAccountsBaseQuery = `
+	SELECT r.id, r.broj_racuna, r.naziv_racuna, v.oznaka AS valuta_oznaka,
+	       r.stanje_racuna, r.rezervisana_sredstva
+	FROM core_banking.racun r
+	JOIN core_banking.valuta v ON v.id = r.id_valute
+	WHERE r.id_vlasnika = 2
+	  AND r.status = 'AKTIVAN'
+	  AND r.id NOT IN (
+	      SELECT account_id FROM core_banking.investment_funds WHERE account_id IS NOT NULL
+	  )
+`
+
+func bankRowsToItems(rows []bankAccountRow) []domain.BankAccountItem {
 	items := make([]domain.BankAccountItem, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, domain.BankAccountItem{
 			ID:                  row.ID,
 			BrojRacuna:          row.BrojRacuna,
 			NazivRacuna:         row.NazivRacuna,
+			ValutaOznaka:        row.ValutaOznaka,
 			StanjeRacuna:        row.StanjeRacuna,
 			RezervovanaSredstva: row.RezervovanaSredstva,
 			RaspolozivoStanje:   row.StanjeRacuna - row.RezervovanaSredstva,
 		})
 	}
-	return items, nil
+	return items
+}
+
+func (r *investmentFundRepository) ListBankRSDAccounts(ctx context.Context) ([]domain.BankAccountItem, error) {
+	var rows []bankAccountRow
+	err := r.db.WithContext(ctx).Raw(bankAccountsBaseQuery + "AND v.oznaka = 'RSD' ORDER BY r.id ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return bankRowsToItems(rows), nil
+}
+
+func (r *investmentFundRepository) ListBankAllAccounts(ctx context.Context) ([]domain.BankAccountItem, error) {
+	var rows []bankAccountRow
+	err := r.db.WithContext(ctx).Raw(bankAccountsBaseQuery + "ORDER BY v.oznaka ASC, r.id ASC").Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	return bankRowsToItems(rows), nil
 }
 
 func (r *investmentFundRepository) GetByID(ctx context.Context, id int64) (*domain.InvestmentFund, error) {

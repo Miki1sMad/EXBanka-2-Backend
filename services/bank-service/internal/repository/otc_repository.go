@@ -259,9 +259,20 @@ func (r *otcRepository) UpdateOfferStatus(ctx context.Context, id int64, status 
 }
 
 // AvailablePublicShares vraća (public_shares.quantity − Σ pending offers (excludeOfferID) − Σ valid contracts).
-// Treba pozvati nakon SELECT FOR UPDATE u istoj transakciji da se zaštiti od race-a.
+// FOR UPDATE na public_shares sprečava race condition kad više kupaca istovremeno
+// prolazi capacity check za istog prodavca — mora se zvati unutar aktivne transakcije.
 func (r *otcRepository) AvailablePublicShares(ctx context.Context, sellerID, listingID, excludeOfferID int64) (int32, error) {
-	// 1. quantity iz public_shares (suma redova ako ih ima više).
+	// 1. Zaključaj redove u public_shares FOR UPDATE (bez agregata — PostgreSQL ne
+	//    dozvoljava FOR UPDATE uz SUM/COALESCE). Prazna lista znači nema javnih akcija.
+	var lockedIDs []int64
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT id FROM core_banking.public_shares
+		WHERE user_id = ? AND listing_id = ? FOR UPDATE
+	`, sellerID, listingID).Scan(&lockedIDs).Error; err != nil {
+		return 0, fmt.Errorf("lock public_shares: %w", err)
+	}
+
+	// 2. Čitanje sume — redovi su već zaključani u ovoj transakciji.
 	var publicQty int64
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(quantity), 0) FROM core_banking.public_shares
@@ -275,19 +286,24 @@ func (r *otcRepository) AvailablePublicShares(ctx context.Context, sellerID, lis
 	}
 
 	// 2. SUM aktivnih PENDING ponuda za istog seller-a/listing-a (osim trenutne).
+	// Isključujemo ponude čiji je settlementDate prošao — te su efektivno mrtve
+	// i ne treba da blokiraju kapacitet.
 	var pendingSum int64
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(amount), 0) FROM core_banking.otc_offers
-		WHERE seller_id = ? AND listing_id = ? AND status = 'PENDING' AND id <> ?
+		WHERE seller_id = ? AND listing_id = ? AND status = 'PENDING'
+		  AND id <> ? AND settlement_date >= NOW()
 	`, sellerID, listingID, excludeOfferID).Scan(&pendingSum).Error; err != nil {
 		return 0, fmt.Errorf("sum pending offers: %w", err)
 	}
 
-	// 3. SUM VALID ugovora.
+	// 3. SUM VALID ugovora čiji settlementDate još nije prošao.
+	// Istekli (ali još ne-ažurirani) ugovori se ne broje — akcije su odmah slobodne.
 	var contractSum int64
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT COALESCE(SUM(amount), 0) FROM core_banking.otc_contracts
 		WHERE seller_id = ? AND listing_id = ? AND status = 'VALID'
+		  AND settlement_date >= NOW()
 	`, sellerID, listingID).Scan(&contractSum).Error; err != nil {
 		return 0, fmt.Errorf("sum valid contracts: %w", err)
 	}
@@ -404,7 +420,9 @@ func (r *otcRepository) ListOffers(ctx context.Context, filter domain.ListOTCOff
 
 // ListMarketplace agregira public_shares po (seller, listing), oduzima
 // already-reserved količinu (PENDING ponude + VALID ugovori) i isključuje
-// callerID-ja kao prodavca (ne prikazujemo svoje akcije za samo-kupovinu).
+// callerID-ja kao prodavca.
+// Prikazuje SAMO akcije klijenata (prodavac nije u actuary_info).
+// Za zaposlene se ne poziva — handler odmah vraća prazan niz.
 func (r *otcRepository) ListMarketplace(ctx context.Context, callerID int64) ([]domain.OTCMarketplaceItem, error) {
 	type row struct {
 		ListingID      int64   `gorm:"column:listing_id"`
@@ -417,6 +435,7 @@ func (r *otcRepository) ListMarketplace(ctx context.Context, callerID int64) ([]
 		ExchangeAcr    string  `gorm:"column:exchange_acr"`
 		MarketPriceUSD float64 `gorm:"column:market_price_usd"`
 	}
+
 	var rows []row
 	if err := r.db.WithContext(ctx).Raw(`
 		SELECT
@@ -428,7 +447,7 @@ func (r *otcRepository) ListMarketplace(ctx context.Context, callerID int64) ([]
 		                AND o.status = 'PENDING'), 0) AS reserved_offers,
 		    COALESCE((SELECT SUM(c.amount) FROM core_banking.otc_contracts c
 		              WHERE c.seller_id = ps.user_id AND c.listing_id = ps.listing_id
-		                AND c.status = 'VALID'), 0) AS reserved_contracts,
+		                AND c.status = 'VALID' AND c.settlement_date >= NOW()), 0) AS reserved_contracts,
 		    l.ticker AS ticker,
 		    l.name   AS stock_name,
 		    e.acronym AS exchange_acr,
@@ -437,6 +456,9 @@ func (r *otcRepository) ListMarketplace(ctx context.Context, callerID int64) ([]
 		JOIN core_banking.listing l  ON l.id = ps.listing_id
 		LEFT JOIN core_banking.exchange e ON e.id = l.exchange_id
 		WHERE ps.user_id <> ?
+		  AND NOT EXISTS (
+		      SELECT 1 FROM core_banking.actuary_info ai WHERE ai.employee_id = ps.user_id
+		  )
 		GROUP BY ps.listing_id, ps.user_id, l.ticker, l.name, e.acronym, l.price
 		ORDER BY l.ticker ASC
 	`, callerID).Scan(&rows).Error; err != nil {
@@ -587,6 +609,18 @@ func (r *otcRepository) UpdateContractStatus(ctx context.Context, id int64, stat
 		return domain.ErrOTCContractNotFound
 	}
 	return nil
+}
+
+// ExpireOverdueContracts bulk-ažurira sve VALID ugovore čiji je settlement_date
+// prošao na EXPIRED. Poziva se iz dnevnog workera.
+func (r *otcRepository) ExpireOverdueContracts(ctx context.Context) (int, error) {
+	res := r.db.WithContext(ctx).Exec(
+		`UPDATE core_banking.otc_contracts SET status = 'EXPIRED' WHERE status = 'VALID' AND settlement_date < NOW()`,
+	)
+	if res.Error != nil {
+		return 0, fmt.Errorf("expire overdue contracts: %w", res.Error)
+	}
+	return int(res.RowsAffected), nil
 }
 
 // Napomena: transfer premije je preseljen u PaymentService

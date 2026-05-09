@@ -13,6 +13,7 @@ package handler
 // callerID se izvlači iz claims.Subject).
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -21,18 +22,21 @@ import (
 	"time"
 
 	"banka-backend/services/bank-service/internal/domain"
+	"banka-backend/services/bank-service/internal/transport"
 	auth "banka-backend/shared/auth"
+	"google.golang.org/grpc/metadata"
 )
 
 // OTCHandler ruta za /api/otc/offers* sa vlastitim malim mux-om.
 type OTCHandler struct {
-	svc       domain.OTCService
-	jwtSecret string
-	ownBankID int64 // ID ove banke; upisuje se u buyer_bank_id/seller_bank_id pri kreiranju ponuda
+	svc        domain.OTCService
+	jwtSecret  string
+	ownBankID  int64 // ID ove banke; upisuje se u buyer_bank_id/seller_bank_id pri kreiranju ponuda
+	userClient *transport.UserServiceClient
 }
 
-func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64) *OTCHandler {
-	return &OTCHandler{svc: svc, jwtSecret: jwtSecret, ownBankID: ownBankID}
+func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64, userClient *transport.UserServiceClient) *OTCHandler {
+	return &OTCHandler{svc: svc, jwtSecret: jwtSecret, ownBankID: ownBankID, userClient: userClient}
 }
 
 // ServeHTTP dispetcher. Putanju cepamo ručno da bismo ostali konzistentni sa
@@ -40,7 +44,7 @@ func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64) *OT
 func (h *OTCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	callerID, err := h.authenticate(r)
+	callerID, callerType, err := h.authenticate(r)
 	if err != nil {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
@@ -52,7 +56,7 @@ func (h *OTCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		h.handleMarketplace(w, r, callerID)
+		h.handleMarketplace(w, r, callerID, callerType)
 		return
 	}
 
@@ -118,16 +122,17 @@ func (h *OTCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ─── Auth helper ──────────────────────────────────────────────────────────────
 
-func (h *OTCHandler) authenticate(r *http.Request) (int64, error) {
+func (h *OTCHandler) authenticate(r *http.Request) (callerID int64, userType string, err error) {
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		return 0, errors.New("no token")
+		return 0, "", errors.New("no token")
 	}
 	claims, err := auth.VerifyToken(strings.TrimPrefix(authHeader, "Bearer "), h.jwtSecret)
 	if err != nil {
-		return 0, err
+		return 0, "", err
 	}
-	return strconv.ParseInt(claims.Subject, 10, 64)
+	id, err := strconv.ParseInt(claims.Subject, 10, 64)
+	return id, claims.UserType, err
 }
 
 // ─── DTO request/response ─────────────────────────────────────────────────────
@@ -183,6 +188,9 @@ type offerDTO struct {
 
 	SellerBankID *int64 `json:"sellerBankId,omitempty"`
 	BuyerBankID  *int64 `json:"buyerBankId,omitempty"`
+
+	BuyerName  string `json:"buyerName,omitempty"`
+	SellerName string `json:"sellerName,omitempty"`
 }
 
 type contractDTO struct {
@@ -268,6 +276,17 @@ func (h *OTCHandler) handleCreate(w http.ResponseWriter, r *http.Request, caller
 	if req.SellerID == 0 || req.ListingID == 0 || req.BuyerAccountID == 0 {
 		writeJSONError(w, http.StatusBadRequest, "nedostaje listingId, sellerId ili buyerAccountId")
 		return
+	}
+
+	// Proveravamo kompatibilnost uloga: CLIENT↔CLIENT i SUPERVISOR↔SUPERVISOR su
+	// dozvoljeni; CLIENT↔EMPLOYEE (ili obrnuto) nije dozvoljen po specifikaciji.
+	if h.userClient != nil {
+		buyerType := h.resolveUserType(r, callerID)
+		sellerType := h.resolveUserType(r, req.SellerID)
+		if buyerType != "" && sellerType != "" && buyerType != sellerType {
+			writeJSONError(w, http.StatusForbidden, "OTC ponuda između klijenta i zaposlenog nije dozvoljena — obe strane moraju biti iste uloge")
+			return
+		}
 	}
 
 	// Kupac je uvek iz naše banke; prodavac je iz naše banke osim ako
@@ -364,7 +383,12 @@ type marketplaceItemDTO struct {
 	AvailableQuantity int32   `json:"availableQuantity"`
 }
 
-func (h *OTCHandler) handleMarketplace(w http.ResponseWriter, r *http.Request, callerID int64) {
+func (h *OTCHandler) handleMarketplace(w http.ResponseWriter, r *http.Request, callerID int64, callerType string) {
+	// Zaposleni dele isti trezor račun — nema inter-bank integracije, marketplace je prazan.
+	if callerType == "EMPLOYEE" || callerType == "ADMIN" {
+		writeOTCJSON(w, http.StatusOK, []marketplaceItemDTO{})
+		return
+	}
 	items, err := h.svc.ListMarketplace(r.Context(), callerID)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu marketplace-a")
@@ -379,7 +403,7 @@ func (h *OTCHandler) handleMarketplace(w http.ResponseWriter, r *http.Request, c
 			Exchange:          it.Exchange,
 			MarketPriceUSD:    it.MarketPriceUSD,
 			SellerID:          it.SellerID,
-			SellerName:        it.SellerName,
+			SellerName:        h.resolveUserName(r, it.SellerID),
 			AvailableQuantity: it.AvailableQuantity,
 		})
 	}
@@ -410,9 +434,50 @@ func (h *OTCHandler) handleList(w http.ResponseWriter, r *http.Request, callerID
 	}
 	out := make([]offerDTO, 0, len(items))
 	for _, it := range items {
-		out = append(out, listItemDTO(it, callerID))
+		dto := listItemDTO(it, callerID)
+		dto.BuyerName = h.resolveUserName(r, it.BuyerID)
+		dto.SellerName = h.resolveUserName(r, it.SellerID)
+		out = append(out, dto)
 	}
 	writeOTCJSON(w, http.StatusOK, out)
+}
+
+// resolveUserType dohvata tip korisnika ("CLIENT" ili "EMPLOYEE") iz user-service.
+// Koristi service token (EMPLOYEE+SUPERVISOR) za gRPC poziv — korisnikov token
+// možda nema potrebne dozvole (CLIENT ne može gledati tuđe podatke).
+func (h *OTCHandler) resolveUserType(r *http.Request, userID int64) string {
+	if h.userClient == nil || userID == 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+serviceToken(h.jwtSecret)))
+	if _, err := h.userClient.GetClientInfo(ctx, userID); err == nil {
+		return "CLIENT"
+	}
+	if _, err := h.userClient.GetEmployeeInfo(ctx, userID); err == nil {
+		return "EMPLOYEE"
+	}
+	return ""
+}
+
+// resolveUserName dohvata "Ime Prezime" za userID iz user-service.
+// Koristi service token (EMPLOYEE+SUPERVISOR) za gRPC poziv — korisnikov token
+// možda nema potrebne dozvole (CLIENT ne može gledati tuđe podatke).
+func (h *OTCHandler) resolveUserName(r *http.Request, userID int64) string {
+	if h.userClient == nil || userID == 0 {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	ctx = metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer "+serviceToken(h.jwtSecret)))
+	if info, err := h.userClient.GetClientInfo(ctx, userID); err == nil && info != nil {
+		return strings.TrimSpace(info.FirstName + " " + info.LastName)
+	}
+	if info, err := h.userClient.GetEmployeeInfo(ctx, userID); err == nil && info != nil {
+		return strings.TrimSpace(info.FirstName + " " + info.LastName)
+	}
+	return ""
 }
 
 // ─── Error mapping ────────────────────────────────────────────────────────────

@@ -104,13 +104,19 @@ func (h *InvestmentFundHandler) BankAccountsHandler(w http.ResponseWriter, r *ht
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	if !isSupervisorPermission(claims) {
-		writeJSONError(w, http.StatusForbidden, "samo supervizori i admini mogu listati račune banke")
+	if claims.UserType != "EMPLOYEE" && claims.UserType != "ADMIN" {
+		writeJSONError(w, http.StatusForbidden, "samo zaposleni mogu listati račune banke")
 		return
 	}
 
-	items, err := h.fundRepo.ListBankRSDAccounts(r.Context())
-	if err != nil {
+	var items []domain.BankAccountItem
+	var fetchErr error
+	if r.URL.Query().Get("allCurrencies") == "true" {
+		items, fetchErr = h.fundRepo.ListBankAllAccounts(r.Context())
+	} else {
+		items, fetchErr = h.fundRepo.ListBankRSDAccounts(r.Context())
+	}
+	if fetchErr != nil {
 		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu računa banke")
 		return
 	}
@@ -130,7 +136,7 @@ func (h *InvestmentFundHandler) BankAccountsHandler(w http.ResponseWriter, r *ht
 			ID:                  strconv.FormatInt(it.ID, 10),
 			BrojRacuna:          it.BrojRacuna,
 			NazivRacuna:         it.NazivRacuna,
-			ValutaOznaka:        "RSD",
+			ValutaOznaka:        it.ValutaOznaka,
 			StanjeRacuna:        it.StanjeRacuna,
 			RezervisanaSredstva: it.RezervovanaSredstva,
 			RaspolozivoStanje:   it.RaspolozivoStanje,

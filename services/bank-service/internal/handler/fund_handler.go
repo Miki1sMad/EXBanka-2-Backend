@@ -8,11 +8,12 @@ package handler
 //   POST /bank/funds/{id}/withdraw         — withdraw from a fund
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,13 @@ func NewFundHandler(
 // ServeHTTP dispatches /bank/funds/* requests.
 func (h *FundHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	authHeader := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authHeader, "Bearer ") {
@@ -274,10 +282,15 @@ func (h *FundHandler) invest(w http.ResponseWriter, r *http.Request, claims *aut
 		return
 	}
 
-	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	callerID, err := strconv.ParseInt(claims.Subject, 10, 64)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "invalid user id")
 		return
+	}
+	// Supervisor ulaže u ime banke — pozicija se vodi pod bankSystemUserID (2).
+	userID := callerID
+	if isBankSupervisorClaims(claims) {
+		userID = bankSystemUserID
 	}
 
 	var req investRequest
@@ -311,33 +324,64 @@ func (h *FundHandler) invest(w http.ResponseWriter, r *http.Request, claims *aut
 		JOIN core_banking.valuta v ON v.id = r.id_valute WHERE r.id = ?
 	`, accountID).Scan(&accCurrency)
 
-	// Convert to RSD.
+	// req.Amount is always in RSD (the fund's denomination).
+	// For non-RSD accounts: calculate how much account currency to debit so that
+	// the fund receives exactly req.Amount RSD. Commission (0.5%) is charged in
+	// account currency on top of the RSD/kupovni equivalent.
+	const fundInvestCommissionRate = 0.005
 	amountRSD := req.Amount
-	if accCurrency != "" && accCurrency != "RSD" {
-		rates, err := h.exchangeService.GetRates(ctx)
-		if err == nil {
-			for _, rt := range rates {
-				if rt.Oznaka == accCurrency && rt.Srednji > 0 {
-					amountRSD = req.Amount * rt.Srednji
-					break
-				}
+	amountToDebit := req.Amount // in account currency; equals amountRSD for RSD accounts
+	var commissionInAccCurrency float64
+	isFX := accCurrency != "" && accCurrency != "RSD"
+
+	var treasuryFromID, treasuryRSDID int64
+	if isFX {
+		rates, rateErr := h.exchangeService.GetRates(ctx)
+		if rateErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "kurs nije dostupan")
+			return
+		}
+		var kupovni float64
+		for _, rt := range rates {
+			if rt.Oznaka == accCurrency {
+				kupovni = rt.Kupovni // mid * (1 - spread); bank buys foreign from client
+				break
 			}
+		}
+		if kupovni <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "kurs nije dostupan za valutu "+accCurrency)
+			return
+		}
+		baseAmount := amountRSD / kupovni                               // account currency without commission
+		commissionInAccCurrency = baseAmount * fundInvestCommissionRate // 0.5% stays in bank treasury
+		amountToDebit = baseAmount + commissionInAccCurrency
+
+		var err error
+		treasuryFromID, err = h.fetchTreasuryID(ctx, accCurrency)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "trezorski račun za valutu "+accCurrency+" nije pronađen")
+			return
+		}
+		treasuryRSDID, err = h.fetchTreasuryID(ctx, "RSD")
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "trezorski RSD račun nije pronađen")
+			return
 		}
 	}
 
-	// 2.3: Minimum contribution validation.
+	// Minimum contribution validation (always in RSD).
 	if fund.MinimumContribution > 0 && amountRSD < fund.MinimumContribution {
 		writeJSONError(w, http.StatusBadRequest,
 			fmt.Sprintf("minimalni ulog je %.2f RSD", fund.MinimumContribution))
 		return
 	}
 
-	// Check sufficient funds.
+	// Check sufficient funds (in account currency).
 	var available float64
 	h.db.WithContext(ctx).Raw(`
 		SELECT stanje_racuna - rezervisana_sredstva FROM core_banking.racun WHERE id = ?
 	`, accountID).Scan(&available)
-	if available < req.Amount {
+	if available < amountToDebit {
 		writeJSONError(w, http.StatusBadRequest, "nedovoljno sredstava na računu")
 		return
 	}
@@ -349,30 +393,87 @@ func (h *FundHandler) invest(w http.ResponseWriter, r *http.Request, claims *aut
 	}
 
 	txErr := h.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. Debit client account (in their currency).
-		if err := tx.Exec(`
-			UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?
-		`, req.Amount, accountID).Error; err != nil {
-			return err
-		}
+		if isFX {
+			// Non-RSD: 4-way FX journal entry through bank treasuries.
+			// Client pays amountToDebit (foreign currency) → bank foreign treasury.
+			// Bank RSD treasury pays amountRSD → fund RSD account.
+			opis := fmt.Sprintf("Uplata u investicioni fond (%.4g RSD, plaćeno %.4g %s, provizija: %.4g %s)",
+				amountRSD, amountToDebit, accCurrency, commissionInAccCurrency, accCurrency)
+			now := time.Now().UTC()
 
-		// 2. Credit fund's RSD account.
-		if fundAccountID > 0 {
-			if err := tx.Exec(`
-				UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
-			`, amountRSD, fundAccountID).Error; err != nil {
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?`,
+				amountToDebit, accountID).Error; err != nil {
+				return fmt.Errorf("zaduži klijentski račun: %w", err)
+			}
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?`,
+				amountToDebit, treasuryFromID).Error; err != nil {
+				return fmt.Errorf("odobri trezor %s: %w", accCurrency, err)
+			}
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?`,
+				amountRSD, treasuryRSDID).Error; err != nil {
+				return fmt.Errorf("zaduži trezor RSD: %w", err)
+			}
+			if fundAccountID > 0 {
+				if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?`,
+					amountRSD, fundAccountID).Error; err != nil {
+					return fmt.Errorf("odobri račun fonda: %w", err)
+				}
+			}
+			for _, rec := range []struct {
+				id    int64
+				iznos float64
+			}{
+				{accountID, amountToDebit},
+				{treasuryFromID, amountToDebit},
+				{treasuryRSDID, amountRSD},
+				{fundAccountID, amountRSD},
+			} {
+				if rec.id == 0 {
+					continue
+				}
+				if err := tx.Exec(`
+					INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+					VALUES (?, 'MENJACNICA', ?, ?, ?, 'IZVRSEN')
+				`, rec.id, rec.iznos, opis, now).Error; err != nil {
+					return fmt.Errorf("upiši transakciju menjačnice: %w", err)
+				}
+			}
+		} else {
+			// RSD: direct debit/credit.
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?`,
+				amountRSD, accountID).Error; err != nil {
 				return err
+			}
+			if fundAccountID > 0 {
+				if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?`,
+					amountRSD, fundAccountID).Error; err != nil {
+					return err
+				}
+			}
+			if err := tx.Exec(`
+				INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+				VALUES (?, 'ISPLATA', ?, 'Uplata u investicioni fond', NOW(), 'IZVRSEN')
+			`, accountID, amountRSD).Error; err != nil {
+				return err
+			}
+			if fundAccountID > 0 {
+				if err := tx.Exec(`
+					INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+					VALUES (?, 'UPLATA', ?, 'Prihod od investitora', NOW(), 'IZVRSEN')
+				`, fundAccountID, amountRSD).Error; err != nil {
+					return err
+				}
 			}
 		}
 
-		// 3. Increase fund liquid_assets.
+		// Increase fund liquid_assets.
 		if err := tx.Exec(`
 			UPDATE core_banking.investment_funds SET liquid_assets = liquid_assets + ? WHERE id = ?
 		`, amountRSD, fundID).Error; err != nil {
 			return err
 		}
 
-		// 4. Upsert client position.
+		// Upsert client position.
 		if err := tx.Exec(`
 			INSERT INTO core_banking.fund_positions (fund_id, user_id, account_id, invested_rsd)
 			VALUES (?, ?, ?, ?)
@@ -382,7 +483,7 @@ func (h *FundHandler) invest(w http.ResponseWriter, r *http.Request, claims *aut
 			return err
 		}
 
-		// 5. Persist transaction record (2.1).
+		// Persist transaction record (2.1).
 		return tx.Create(&clientFundTransactionModel{
 			FundID:    fundID,
 			UserID:    userID,
@@ -418,10 +519,14 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 		return
 	}
 
-	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	callerID, err := strconv.ParseInt(claims.Subject, 10, 64)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "invalid user id")
 		return
+	}
+	userID := callerID
+	if isBankSupervisorClaims(claims) {
+		userID = bankSystemUserID
 	}
 
 	var req withdrawRequest
@@ -471,17 +576,45 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 		JOIN core_banking.valuta v ON v.id = r.id_valute WHERE r.id = ?
 	`, accountID).Scan(&accCurrency)
 
-	// Convert net amount to account currency.
+	// FX conversion for withdrawal.
+	// Supervisors (bank accounts): use Srednji rate, no commission.
+	// Clients (own accounts): use Prodajni rate (bank sells FX to client), 1% commission already deducted above.
+	isWithdrawFX := accCurrency != "" && accCurrency != "RSD"
 	creditAmount := netWithdrawRSD
-	if accCurrency != "" && accCurrency != "RSD" {
-		rates, err := h.exchangeService.GetRates(ctx)
-		if err == nil {
-			for _, rt := range rates {
-				if rt.Oznaka == accCurrency && rt.Srednji > 0 {
-					creditAmount = netWithdrawRSD / rt.Srednji
-					break
+	var matchRate float64 // declared at outer scope so transaction closure can access it
+	var withdrawTreasuryRSDID, withdrawTreasuryFXID int64
+	if isWithdrawFX {
+		rates, rateErr := h.exchangeService.GetRates(ctx)
+		if rateErr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "kurs nije dostupan")
+			return
+		}
+		for _, rt := range rates {
+			if rt.Oznaka == accCurrency {
+				if isSupervisor {
+					matchRate = rt.Srednji
+				} else {
+					matchRate = rt.Prodajni // bank sells FX to client
 				}
+				break
 			}
+		}
+		if matchRate <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "kurs nije dostupan za valutu "+accCurrency)
+			return
+		}
+		creditAmount = netWithdrawRSD / matchRate
+
+		var errT error
+		withdrawTreasuryRSDID, errT = h.fetchTreasuryID(ctx, "RSD")
+		if errT != nil {
+			writeJSONError(w, http.StatusInternalServerError, "trezorski RSD račun nije pronađen")
+			return
+		}
+		withdrawTreasuryFXID, errT = h.fetchTreasuryID(ctx, accCurrency)
+		if errT != nil {
+			writeJSONError(w, http.StatusInternalServerError, "trezorski račun za valutu "+accCurrency+" nije pronađen")
+			return
 		}
 	}
 
@@ -493,9 +626,10 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 		var fundLocked struct {
 			LiquidAssets float64 `gorm:"column:liquid_assets"`
 			AccountID    *int64  `gorm:"column:account_id"`
+			ManagerID    int64   `gorm:"column:manager_id"`
 		}
 		if err := tx.Raw(`
-			SELECT liquid_assets, account_id
+			SELECT liquid_assets, account_id, manager_id
 			FROM core_banking.investment_funds
 			WHERE id = ?
 			FOR UPDATE
@@ -509,26 +643,44 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 				return errors.New("fond nema dovoljno likvidnih sredstava za povlačenje")
 			}
 
-			// Sort by total value descending — liquidate largest positions first.
-			secs := make([]domain.FundSecurityDetail, len(details.Securities))
-			copy(secs, details.Securities)
-			sort.Slice(secs, func(i, j int) bool {
-				return secs[i].Quantity*secs[i].CurrentPriceRSD > secs[j].Quantity*secs[j].CurrentPriceRSD
-			})
+			// Proportional liquidation: sell each security in proportion to its share of total
+			// portfolio market value. Falls back to initial_cost_rsd/quantity when market
+			// price is unavailable (external API down), so liquidation can proceed in dev/test.
+			secs := details.Securities
+
+			// effectiveUnitPrice returns market price or acquisition price as fallback.
+			effectiveUnitPrice := func(sec domain.FundSecurityDetail) float64 {
+				if sec.CurrentPriceRSD > 0 {
+					return sec.CurrentPriceRSD
+				}
+				if sec.Quantity > 0 && sec.InitialCostRSD > 0 {
+					return sec.InitialCostRSD / sec.Quantity
+				}
+				return 0
+			}
+
+			totalSecValue := 0.0
+			for _, sec := range secs {
+				totalSecValue += sec.Quantity * effectiveUnitPrice(sec)
+			}
 
 			needed := netWithdrawRSD - fundLocked.LiquidAssets
+			originalNeeded := needed
 			for _, sec := range secs {
-				if needed <= 0 {
-					break
-				}
-				if sec.CurrentPriceRSD <= 0 {
+				unitPrice := effectiveUnitPrice(sec)
+				if unitPrice <= 0 || totalSecValue <= 0 {
 					continue
 				}
-				canSell := needed / sec.CurrentPriceRSD
-				if canSell > sec.Quantity {
-					canSell = sec.Quantity
+				secValue := sec.Quantity * unitPrice
+				targetProceeds := originalNeeded * (secValue / totalSecValue)
+				if targetProceeds > secValue {
+					targetProceeds = secValue
 				}
-				proceeds := canSell * sec.CurrentPriceRSD
+				canSell := targetProceeds / unitPrice
+				if targetProceeds >= secValue {
+					canSell = sec.Quantity // sell entire position; avoids fp residuals
+				}
+				proceeds := canSell * unitPrice
 
 				if err := tx.Exec(`
 					UPDATE core_banking.fund_securities
@@ -549,12 +701,53 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 				`, proceeds, fundID).Error; err != nil {
 					return fmt.Errorf("ažuriranje liquid_assets nakon likvidacije: %w", err)
 				}
+				// Credit the fund's RSD account so the later debit can succeed.
+				if fundLocked.AccountID != nil && *fundLocked.AccountID > 0 {
+					if err := tx.Exec(`
+						UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
+					`, proceeds, *fundLocked.AccountID).Error; err != nil {
+						return fmt.Errorf("kreditovanje računa fonda nakon likvidacije: %w", err)
+					}
+				}
+				// Synthetic SELL order so portfolio aggregation stays in sync.
+				if fundLocked.ManagerID > 0 && fundLocked.AccountID != nil && *fundLocked.AccountID > 0 {
+					sellQty := int64(math.Round(canSell))
+					if sellQty > 0 {
+						now := time.Now().UTC()
+						tx.Exec(`
+							INSERT INTO core_banking.orders
+							  (user_id, account_id, listing_id, order_type, direction, quantity,
+							   contract_size, status, is_done, remaining_portions,
+							   after_hours, all_or_none, margin, fund_id, last_modified, created_at)
+							VALUES (?, ?, ?, 'MARKET', 'SELL', ?, 1, 'DONE', TRUE, 0,
+							        FALSE, FALSE, FALSE, ?, ?, ?)
+						`, fundLocked.ManagerID, *fundLocked.AccountID, sec.ListingID,
+							sellQty, fundID, now, now)
+					}
+				}
 				fundLocked.LiquidAssets += proceeds
 				needed -= proceeds
 			}
 
 			if needed > 0.01 {
-				return errors.New("fond nema dovoljno sredstava za povlačenje")
+				if !req.WithdrawAll {
+					return errors.New("fond nema dovoljno sredstava za povlačenje")
+				}
+				// Pristup A: pay what the fund has; close position entirely.
+			}
+		}
+
+		// Actual payout may be less than requested when withdrawAll and fund is short.
+		actualNetRSD := netWithdrawRSD
+		if fundLocked.LiquidAssets < actualNetRSD {
+			actualNetRSD = fundLocked.LiquidAssets
+		}
+		actualCredit := creditAmount
+		if actualNetRSD < netWithdrawRSD {
+			if isWithdrawFX && matchRate > 0 {
+				actualCredit = actualNetRSD / matchRate
+			} else {
+				actualCredit = actualNetRSD
 			}
 		}
 
@@ -563,24 +756,83 @@ func (h *FundHandler) withdraw(w http.ResponseWriter, r *http.Request, claims *a
 			UPDATE core_banking.investment_funds
 			SET liquid_assets = GREATEST(0, liquid_assets - ?)
 			WHERE id = ?
-		`, netWithdrawRSD, fundID).Error; err != nil {
+		`, actualNetRSD, fundID).Error; err != nil {
 			return fmt.Errorf("umanjenje liquid_assets fonda: %w", err)
 		}
 
-		// Debit fund's RSD account.
-		if fundLocked.AccountID != nil && *fundLocked.AccountID > 0 {
-			if err := tx.Exec(`
-				UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?
-			`, netWithdrawRSD, *fundLocked.AccountID).Error; err != nil {
-				return fmt.Errorf("umanjenje stanja računa fonda: %w", err)
+		if isWithdrawFX {
+			// 4-way FX journal: fund RSD → bank RSD treasury → bank FX treasury → recipient FX account.
+			opis := fmt.Sprintf("Povlačenje iz investicionog fonda (%.4g RSD → %.4g %s)", actualNetRSD, actualCredit, accCurrency)
+			now := time.Now().UTC()
+			fundAccID := int64(0)
+			if fundLocked.AccountID != nil {
+				fundAccID = *fundLocked.AccountID
 			}
-		}
-
-		// Credit client's account.
-		if err := tx.Exec(`
-			UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
-		`, creditAmount, accountID).Error; err != nil {
-			return fmt.Errorf("odobravanje klijentovog računa: %w", err)
+			if fundAccID > 0 {
+				if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?`,
+					actualNetRSD, fundAccID).Error; err != nil {
+					return fmt.Errorf("umanjenje stanja računa fonda: %w", err)
+				}
+			}
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?`,
+				actualNetRSD, withdrawTreasuryRSDID).Error; err != nil {
+				return fmt.Errorf("odobri trezor RSD: %w", err)
+			}
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?`,
+				actualCredit, withdrawTreasuryFXID).Error; err != nil {
+				return fmt.Errorf("zaduži trezor %s: %w", accCurrency, err)
+			}
+			if err := tx.Exec(`UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?`,
+				actualCredit, accountID).Error; err != nil {
+				return fmt.Errorf("odobravanje računa za isplatu: %w", err)
+			}
+			for _, rec := range []struct {
+				id    int64
+				iznos float64
+			}{
+				{fundAccID, actualNetRSD},
+				{withdrawTreasuryRSDID, actualNetRSD},
+				{withdrawTreasuryFXID, actualCredit},
+				{accountID, actualCredit},
+			} {
+				if rec.id == 0 {
+					continue
+				}
+				if err := tx.Exec(`
+					INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+					VALUES (?, 'MENJACNICA', ?, ?, ?, 'IZVRSEN')
+				`, rec.id, rec.iznos, opis, now).Error; err != nil {
+					return fmt.Errorf("upiši transakciju menjačnice: %w", err)
+				}
+			}
+		} else {
+			// RSD: direct debit fund account, credit recipient account.
+			if fundLocked.AccountID != nil && *fundLocked.AccountID > 0 {
+				if err := tx.Exec(`
+					UPDATE core_banking.racun SET stanje_racuna = stanje_racuna - ? WHERE id = ?
+				`, actualNetRSD, *fundLocked.AccountID).Error; err != nil {
+					return fmt.Errorf("umanjenje stanja računa fonda: %w", err)
+				}
+			}
+			if err := tx.Exec(`
+				UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
+			`, actualCredit, accountID).Error; err != nil {
+				return fmt.Errorf("odobravanje klijentovog računa: %w", err)
+			}
+			if fundLocked.AccountID != nil && *fundLocked.AccountID > 0 {
+				if err := tx.Exec(`
+					INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+					VALUES (?, 'ISPLATA', ?, 'Isplata investitoru iz fonda', NOW(), 'IZVRSEN')
+				`, *fundLocked.AccountID, actualNetRSD).Error; err != nil {
+					return fmt.Errorf("zapis transakcije fonda: %w", err)
+				}
+			}
+			if err := tx.Exec(`
+				INSERT INTO core_banking.transakcija (racun_id, tip_transakcije, iznos, opis, vreme_izvrsavanja, status)
+				VALUES (?, 'UPLATA', ?, 'Povlačenje iz investicionog fonda', NOW(), 'IZVRSEN')
+			`, accountID, actualCredit).Error; err != nil {
+				return fmt.Errorf("zapis transakcije klijenta: %w", err)
+			}
 		}
 
 		// Update or remove client position.
@@ -680,13 +932,32 @@ func (h *FundHandler) sellSecurity(w http.ResponseWriter, r *http.Request, claim
 		}
 
 		// Credit fund's RSD account.
-		var fundAccountID *int64
-		tx.Raw(`SELECT account_id FROM core_banking.investment_funds WHERE id = ?`, fundID).Scan(&fundAccountID)
-		if fundAccountID != nil && *fundAccountID > 0 {
+		var fundMeta struct {
+			AccountID *int64 `gorm:"column:account_id"`
+			ManagerID int64  `gorm:"column:manager_id"`
+		}
+		tx.Raw(`SELECT account_id, manager_id FROM core_banking.investment_funds WHERE id = ?`, fundID).Scan(&fundMeta)
+		if fundMeta.AccountID != nil && *fundMeta.AccountID > 0 {
 			if err := tx.Exec(`
 				UPDATE core_banking.racun SET stanje_racuna = stanje_racuna + ? WHERE id = ?
-			`, proceeds, *fundAccountID).Error; err != nil {
+			`, proceeds, *fundMeta.AccountID).Error; err != nil {
 				return fmt.Errorf("ažuriranje računa fonda: %w", err)
+			}
+		}
+		// Synthetic SELL order so portfolio aggregation stays in sync.
+		if fundMeta.ManagerID > 0 && fundMeta.AccountID != nil && *fundMeta.AccountID > 0 {
+			sellQty := int64(math.Round(target.Quantity))
+			if sellQty > 0 {
+				now := time.Now().UTC()
+				tx.Exec(`
+					INSERT INTO core_banking.orders
+					  (user_id, account_id, listing_id, order_type, direction, quantity,
+					   contract_size, status, is_done, remaining_portions,
+					   after_hours, all_or_none, margin, fund_id, last_modified, created_at)
+					VALUES (?, ?, ?, 'MARKET', 'SELL', ?, 1, 'DONE', TRUE, 0,
+					        FALSE, FALSE, FALSE, ?, ?, ?)
+				`, fundMeta.ManagerID, *fundMeta.AccountID, target.ListingID,
+					sellQty, fundID, now, now)
 			}
 		}
 		return nil
@@ -783,6 +1054,27 @@ func (h *FundHandler) fundPerformance(w http.ResponseWriter, r *http.Request, fu
 		out = append(out, fundPerformancePoint(row))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// fetchTreasuryID returns the ID of the bank's treasury account for the given currency.
+// The treasury owner is trezor@exbanka.rs (user ID 2 in user-service).
+func (h *FundHandler) fetchTreasuryID(ctx context.Context, currencyOznaka string) (int64, error) {
+	var id int64
+	err := h.db.WithContext(ctx).Raw(`
+		SELECT ra.id FROM core_banking.racun ra
+		JOIN core_banking.valuta v ON v.id = ra.id_valute
+		WHERE ra.id_vlasnika = 2
+		  AND v.oznaka = ?
+		  AND ra.status = 'AKTIVAN'
+		LIMIT 1
+	`, currencyOznaka).Scan(&id).Error
+	if err != nil {
+		return 0, err
+	}
+	if id == 0 {
+		return 0, fmt.Errorf("trezorski račun za valutu %s nije pronađen", currencyOznaka)
+	}
+	return id, nil
 }
 
 // isSupervisor checks if the user is a supervisor (has SUPERVISOR permission).

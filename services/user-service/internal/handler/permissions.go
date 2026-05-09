@@ -17,7 +17,7 @@ const (
 // Inject nil to disable bank-service sync (e.g. when BANK_SERVICE_ADDR is unset).
 type BankActuaryClient interface {
 	CreateActuary(ctx context.Context, employeeID int64, actuaryType string, bearerToken string) error
-	DeleteActuary(ctx context.Context, employeeID int64, bearerToken string) error
+	DeleteActuary(ctx context.Context, employeeID int64, oldActuaryType string, bearerToken string) error
 }
 
 // appendIfMissing returns codes with val appended only when val is not already
