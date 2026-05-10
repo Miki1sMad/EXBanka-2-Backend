@@ -57,8 +57,10 @@ func (c *BankServiceClient) CreateActuary(ctx context.Context, employeeID int64,
 }
 
 // DeleteActuary calls DELETE /bank/internal/actuary/{employeeID} to remove an actuary_info record.
-func (c *BankServiceClient) DeleteActuary(ctx context.Context, employeeID int64, bearerToken string) error {
-	url := fmt.Sprintf("%s/bank/internal/actuary/%d", c.baseURL, employeeID)
+// oldActuaryType ("SUPERVISOR" or "AGENT") is forwarded as a query param so bank-service can
+// trigger fund transfer even when the actuary_info row is missing (e.g. seeded users).
+func (c *BankServiceClient) DeleteActuary(ctx context.Context, employeeID int64, oldActuaryType string, bearerToken string) error {
+	url := fmt.Sprintf("%s/bank/internal/actuary/%d?actuaryType=%s", c.baseURL, employeeID, oldActuaryType)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
 	if err != nil {
 		return fmt.Errorf("build delete-actuary request: %w", err)

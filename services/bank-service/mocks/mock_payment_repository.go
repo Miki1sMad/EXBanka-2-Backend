@@ -79,3 +79,8 @@ func (m *MockPaymentRepository) GetHistory(ctx context.Context, userID int64, fi
 	v, _ := args.Get(0).([]domain.PaymentIntent)
 	return v, args.Error(1)
 }
+
+func (m *MockPaymentRepository) ExecuteOTCPremiumTransfer(ctx context.Context, tx interface{}, in domain.OTCPremiumTransferInput) error {
+	args := m.Called(ctx, tx, in)
+	return args.Error(0)
+}

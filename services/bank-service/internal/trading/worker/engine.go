@@ -158,7 +158,8 @@ type Engine struct {
 	market   MarketDataProvider
 	funds    trading.FundsManager
 	exchange ExchangeChecker
-	db       *gorm.DB // koristi se za atomično omotavanje fill operacija u transakciju
+	fundRepo domain.InvestmentFundRepository // nil-safe: fund fill hooks skipped when nil
+	db       *gorm.DB                        // koristi se za atomično omotavanje fill operacija u transakciju
 
 	// active tracks orderIDs that are currently being processed by a goroutine.
 	// Using sync.Map because reads dominate and keys are added/deleted by
@@ -180,6 +181,8 @@ type Engine struct {
 // pollInterval controls how often the main loop scans for APPROVED orders.
 // Pass 0 to use the package-level defaultPollInterval.
 // exchange se koristi za proveru da li je berza otvorena pre svakog fill-a.
+// fundRepo, kada nije nil, omogućava ažuriranje fund_securities i liquid_assets
+// posle svakog uspešnog BUY fill-a za nalog vezan za investicioni fond.
 // tickBus, ako nije nil, omogućava event-driven LIMIT aktivaciju umesto polling-a.
 // Prosleđuje se i ListingRefresherWorker-u (kao worker.PriceTickPublisher) u main.go.
 func NewEngine(
@@ -189,6 +192,7 @@ func NewEngine(
 	exchange ExchangeChecker,
 	db *gorm.DB,
 	pollInterval time.Duration,
+	fundRepo domain.InvestmentFundRepository,
 	tickBus *PriceTickBus,
 ) *Engine {
 	if pollInterval <= 0 {
@@ -199,6 +203,7 @@ func NewEngine(
 		market:       market,
 		funds:        funds,
 		exchange:     exchange,
+		fundRepo:     fundRepo,
 		db:           db,
 		pollInterval: pollInterval,
 		tickBus:      tickBus,
@@ -710,6 +715,17 @@ func (e *Engine) executeOrder(ctx context.Context, order *trading.Order, effecti
 			commission = commissionForOrderType(current.OrderType, notional)
 		}
 
+		// Pre-compute RSD equivalent for fund fill hooks (outside the transaction
+		// since ConvertUSDToRSD makes an HTTP/exchange call, not a DB call).
+		var fillRSD decimal.Decimal
+		if current.FundID != nil && e.fundRepo != nil && current.Direction == trading.OrderDirectionBuy {
+			if converted, convErr := e.funds.ConvertUSDToRSD(ctx, fillAmount); convErr == nil {
+				fillRSD = converted
+			} else {
+				fillRSD = fillAmount // fallback: treat as 1:1
+			}
+		}
+
 		if err := e.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			txOrders := e.orders.WithDB(tx)
 			txFunds := e.funds.WithDB(tx)
@@ -725,6 +741,20 @@ func (e *Engine) executeOrder(ctx context.Context, order *trading.Order, effecti
 			if current.Direction == trading.OrderDirectionBuy {
 				if err := txFunds.SettleBuyFill(ctx, current.AccountID, fillAmount); err != nil {
 					return err
+				}
+				// Fund fill: accumulate security position and deduct liquid assets.
+				if current.FundID != nil && e.fundRepo != nil && !fillRSD.IsZero() {
+					txFundRepo := e.fundRepo.WithDB(tx)
+					deltaQty := float64(chunkSize) * float64(current.ContractSize)
+					costRSD, _ := fillRSD.Float64()
+					if addErr := txFundRepo.AddSecurityQuantity(ctx, *current.FundID, current.ListingID, deltaQty, time.Now().UTC(), costRSD); addErr != nil {
+						log.Printf("[trading/engine] order %d: AddSecurityQuantity (fund=%d): %v", current.ID, *current.FundID, addErr)
+						return addErr
+					}
+					if dedErr := txFundRepo.DeductLiquidAssets(ctx, *current.FundID, costRSD); dedErr != nil {
+						log.Printf("[trading/engine] order %d: DeductLiquidAssets (fund=%d): %v", current.ID, *current.FundID, dedErr)
+						return dedErr
+					}
 				}
 			} else {
 				if err := txFunds.CreditSellFill(ctx, current.AccountID, fillAmount); err != nil {

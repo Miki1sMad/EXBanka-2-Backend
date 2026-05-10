@@ -134,6 +134,13 @@ func (s *paymentService) GetPaymentDetail(ctx context.Context, id, userID int64)
 	return s.paymentRepo.GetByID(ctx, id, userID)
 }
 
+// ExecuteOTCPremiumTransfer — proxy ka repo metodu koji se izvršava u prosleđenoj
+// *gorm.DB transakciji. OTC servis ovo zove unutar svog `db.Transaction(...)`
+// bloka, zajedno sa kreiranjem ugovora i prelaskom statusa ponude u ACCEPTED.
+func (s *paymentService) ExecuteOTCPremiumTransfer(ctx context.Context, tx interface{}, in domain.OTCPremiumTransferInput) error {
+	return s.paymentRepo.ExecuteOTCPremiumTransfer(ctx, tx, in)
+}
+
 // ─── Validacije ───────────────────────────────────────────────────────────────
 
 // validateSifraPlacanja proverava format šifre plaćanja: 3 cifre, počinje sa 2.

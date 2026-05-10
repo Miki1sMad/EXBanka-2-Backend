@@ -528,7 +528,7 @@ func TestExecuteForexOrder_SellWithLimitFloor_ZeroResult_ReturnsNil(t *testing.T
 // ─── waitForLimitActivation — tickBus paths ───────────────────────────────────
 
 func newTestEngineWithBus(orders trading.OrderRepository, market MarketDataProvider, exchange ExchangeChecker, bus *PriceTickBus) *Engine {
-	return NewEngine(orders, market, &stubFundsManagerEngine{}, exchange, nil, 100*time.Millisecond, bus)
+	return NewEngine(orders, market, &stubFundsManagerEngine{}, exchange, nil, 100*time.Millisecond, nil, bus)
 }
 
 func TestWaitForLimitActivation_TickBus_BuyLimitMet(t *testing.T) {

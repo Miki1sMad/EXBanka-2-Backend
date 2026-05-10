@@ -442,7 +442,7 @@ func (h *UserHandler) UpdateEmployee(ctx context.Context, req *pb.UpdateEmployee
 		needCreate := newActuaryType != "" && (oldActuaryType == "" || newActuaryType != oldActuaryType)
 
 		if needDelete {
-			if err := h.bankClient.DeleteActuary(ctx, req.Id, bearerToken); err != nil {
+			if err := h.bankClient.DeleteActuary(ctx, req.Id, oldActuaryType, bearerToken); err != nil {
 				log.Printf("[UpdateEmployee] bank-service DeleteActuary employee_id=%d: %v", req.Id, err)
 				return nil, status.Errorf(codes.Internal, "failed to remove actuary record in bank-service: %v", err)
 			}
@@ -977,10 +977,8 @@ func (h *UserHandler) GetEmployeeByID(ctx context.Context, req *pb.GetEmployeeBy
 		return nil, status.Errorf(codes.Internal, "failed to fetch employee")
 	}
 
-	// ── 3. Block ADMIN-type targets (Issue 7 edge case) ───────────────────────
-	// Admin accounts are managed outside this employee-edit flow.
 	if row.UserType == "ADMIN" {
-		return nil, status.Errorf(codes.PermissionDenied, "admin accounts cannot be edited through this endpoint")
+		return nil, status.Errorf(codes.PermissionDenied, "admin accounts cannot be fetched through this endpoint")
 	}
 
 	// ── 4. Fetch permissions ──────────────────────────────────────────────────

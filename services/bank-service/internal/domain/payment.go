@@ -141,6 +141,10 @@ type PaymentRepository interface {
 
 	// GetHistory vraća istoriju naloga sa filterima za trenutnog korisnika.
 	GetHistory(ctx context.Context, userID int64, filter PaymentHistoryFilter) ([]PaymentIntent, error)
+
+	// ExecuteOTCPremiumTransfer — auditovan transfer premije kupac→prodavac
+	// unutar prosleđene GORM transakcije (FX kroz trezorske račune banke).
+	ExecuteOTCPremiumTransfer(ctx context.Context, tx interface{}, in OTCPremiumTransferInput) error
 }
 
 // ─── Service interfejs ────────────────────────────────────────────────────────
@@ -165,4 +169,7 @@ type PaymentService interface {
 	// Istorija i detalji
 	GetPaymentHistory(ctx context.Context, userID int64, filter PaymentHistoryFilter) ([]PaymentIntent, error)
 	GetPaymentDetail(ctx context.Context, id, userID int64) (*PaymentIntent, error)
+
+	// OTC integracija — vidi OTCPaymentPort.
+	ExecuteOTCPremiumTransfer(ctx context.Context, tx interface{}, in OTCPremiumTransferInput) error
 }
