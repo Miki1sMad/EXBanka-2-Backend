@@ -218,14 +218,14 @@ const (
 type NoVoteReasonCode string
 
 const (
-	NoReasonUnbalancedTx               NoVoteReasonCode = "UNBALANCED_TX"
-	NoReasonNoSuchAccount              NoVoteReasonCode = "NO_SUCH_ACCOUNT"
-	NoReasonNoSuchAsset                NoVoteReasonCode = "NO_SUCH_ASSET"
-	NoReasonUnacceptableAsset          NoVoteReasonCode = "UNACCEPTABLE_ASSET"
-	NoReasonInsufficientAsset          NoVoteReasonCode = "INSUFFICIENT_ASSET"
-	NoReasonOptionAmountIncorrect      NoVoteReasonCode = "OPTION_AMOUNT_INCORRECT"
-	NoReasonOptionUsedOrExpired        NoVoteReasonCode = "OPTION_USED_OR_EXPIRED"
-	NoReasonOptionNegotiationNotFound  NoVoteReasonCode = "OPTION_NEGOTIATION_NOT_FOUND"
+	NoReasonUnbalancedTx              NoVoteReasonCode = "UNBALANCED_TX"
+	NoReasonNoSuchAccount             NoVoteReasonCode = "NO_SUCH_ACCOUNT"
+	NoReasonNoSuchAsset               NoVoteReasonCode = "NO_SUCH_ASSET"
+	NoReasonUnacceptableAsset         NoVoteReasonCode = "UNACCEPTABLE_ASSET"
+	NoReasonInsufficientAsset         NoVoteReasonCode = "INSUFFICIENT_ASSET"
+	NoReasonOptionAmountIncorrect     NoVoteReasonCode = "OPTION_AMOUNT_INCORRECT"
+	NoReasonOptionUsedOrExpired       NoVoteReasonCode = "OPTION_USED_OR_EXPIRED"
+	NoReasonOptionNegotiationNotFound NoVoteReasonCode = "OPTION_NEGOTIATION_NOT_FOUND"
 )
 
 // NoVoteReason — razlog NO glasa, sa povezanim posting-om kada je primenljivo.
@@ -327,11 +327,11 @@ const (
 type InterbankTxStatus string
 
 const (
-	TxStatusNew         InterbankTxStatus = "NEW"
-	TxStatusPrepared    InterbankTxStatus = "PREPARED"
-	TxStatusCommitted   InterbankTxStatus = "COMMITTED"
-	TxStatusRolledBack  InterbankTxStatus = "ROLLED_BACK"
-	TxStatusFailed      InterbankTxStatus = "FAILED"
+	TxStatusNew        InterbankTxStatus = "NEW"
+	TxStatusPrepared   InterbankTxStatus = "PREPARED"
+	TxStatusCommitted  InterbankTxStatus = "COMMITTED"
+	TxStatusRolledBack InterbankTxStatus = "ROLLED_BACK"
+	TxStatusFailed     InterbankTxStatus = "FAILED"
 )
 
 // InterbankTransaction — saga state za jednu međubankarsku transakciju.
@@ -352,45 +352,45 @@ type InterbankTransaction struct {
 
 // InterbankReservation — čuva detalje rezervacija prikačene za prepared tx.
 type InterbankReservation struct {
-	ID                       int64
-	InterbankTransactionID   int64
-	PostingIndex             int
-	AccountKind              AccountKind
-	AccountNum               *string
-	ForeignRoutingNumber     *int64
-	ForeignID                *string
-	AssetType                AssetType
-	AssetCurrency            *string
-	AssetTicker              *string
-	AssetNegotiationRouting  *int64
-	AssetNegotiationLocalID  *string
-	Amount                   decimal.Decimal
-	Reserved                 bool
-	CreatedAt                time.Time
+	ID                      int64
+	InterbankTransactionID  int64
+	PostingIndex            int
+	AccountKind             AccountKind
+	AccountNum              *string
+	ForeignRoutingNumber    *int64
+	ForeignID               *string
+	AssetType               AssetType
+	AssetCurrency           *string
+	AssetTicker             *string
+	AssetNegotiationRouting *int64
+	AssetNegotiationLocalID *string
+	Amount                  decimal.Decimal
+	Reserved                bool
+	CreatedAt               time.Time
 }
 
 // InterbankNegotiation — entitet OTC pregovaranja na strani prodavca.
 type InterbankNegotiation struct {
-	ID                          int64
-	NegotiationRoutingNumber    int64
-	NegotiationForeignID        string
-	StockTicker                 string
-	SettlementDate              time.Time
-	PriceCurrency               string
-	PriceAmount                 decimal.Decimal
-	PremiumCurrency             string
-	PremiumAmount               decimal.Decimal
-	Amount                      int32
-	BuyerRoutingNumber          int64
-	BuyerID                     string
-	SellerRoutingNumber         int64
-	SellerID                    string
-	LastModifiedRoutingNumber   int64
-	LastModifiedID              string
-	IsOngoing                   bool
-	Status                      string
-	CreatedAt                   time.Time
-	UpdatedAt                   time.Time
+	ID                        int64
+	NegotiationRoutingNumber  int64
+	NegotiationForeignID      string
+	StockTicker               string
+	SettlementDate            time.Time
+	PriceCurrency             string
+	PriceAmount               decimal.Decimal
+	PremiumCurrency           string
+	PremiumAmount             decimal.Decimal
+	Amount                    int32
+	BuyerRoutingNumber        int64
+	BuyerID                   string
+	SellerRoutingNumber       int64
+	SellerID                  string
+	LastModifiedRoutingNumber int64
+	LastModifiedID            string
+	IsOngoing                 bool
+	Status                    string
+	CreatedAt                 time.Time
+	UpdatedAt                 time.Time
 }
 
 // InterbankOptionContract — opcioni ugovor po prihvaćenoj OTC ponudi.

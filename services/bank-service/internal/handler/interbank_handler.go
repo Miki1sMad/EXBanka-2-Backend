@@ -2,14 +2,14 @@
 //
 // HTTP handler-i za si-tx-proto:
 //
-//   POST   /interbank                                — primanje NEW_TX/COMMIT_TX/ROLLBACK_TX
-//   GET    /public-stock                             — javne akcije za OTC
-//   POST   /negotiations                             — kreiranje OTC pregovaranja
-//   PUT    /negotiations/{routing}/{id}              — kontraponuda
-//   GET    /negotiations/{routing}/{id}              — stanje
-//   DELETE /negotiations/{routing}/{id}              — povlačenje (zatvaranje)
-//   GET    /negotiations/{routing}/{id}/accept       — prihvatanje
-//   GET    /user/{routing}/{id}                      — display name korisnika
+//	POST   /interbank                                — primanje NEW_TX/COMMIT_TX/ROLLBACK_TX
+//	GET    /public-stock                             — javne akcije za OTC
+//	POST   /negotiations                             — kreiranje OTC pregovaranja
+//	PUT    /negotiations/{routing}/{id}              — kontraponuda
+//	GET    /negotiations/{routing}/{id}              — stanje
+//	DELETE /negotiations/{routing}/{id}              — povlačenje (zatvaranje)
+//	GET    /negotiations/{routing}/{id}/accept       — prihvatanje
+//	GET    /user/{routing}/{id}                      — display name korisnika
 //
 // Sve dolazne zahteve validiramo preko X-Api-Key header-a (mora biti
 // jednak našem InterbankAPIKey-u). Svi odgovori su JSON; status kodovi

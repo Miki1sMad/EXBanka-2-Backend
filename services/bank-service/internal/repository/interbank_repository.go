@@ -19,21 +19,21 @@ import (
 // ─── GORM modeli ─────────────────────────────────────────────────────────────
 
 type interbankMessageModel struct {
-	ID                       int64           `gorm:"column:id;primaryKey;autoIncrement"`
-	Direction                string          `gorm:"column:direction"`
-	MessageType              string          `gorm:"column:message_type"`
-	IdempotenceRoutingNumber int64           `gorm:"column:idempotence_routing_number"`
-	IdempotenceLocalKey      string          `gorm:"column:idempotence_local_key"`
-	TargetRoutingNumber      *int64          `gorm:"column:target_routing_number"`
-	Payload                  string          `gorm:"column:payload"`
-	ResponsePayload          *string         `gorm:"column:response_payload"`
-	ResponseStatusCode       *int            `gorm:"column:response_status_code"`
-	Status                   string          `gorm:"column:status"`
-	RetryCount               int             `gorm:"column:retry_count"`
-	NextRetryAt              *time.Time      `gorm:"column:next_retry_at"`
-	LastError                string          `gorm:"column:last_error"`
-	CreatedAt                time.Time       `gorm:"column:created_at"`
-	UpdatedAt                time.Time       `gorm:"column:updated_at"`
+	ID                       int64      `gorm:"column:id;primaryKey;autoIncrement"`
+	Direction                string     `gorm:"column:direction"`
+	MessageType              string     `gorm:"column:message_type"`
+	IdempotenceRoutingNumber int64      `gorm:"column:idempotence_routing_number"`
+	IdempotenceLocalKey      string     `gorm:"column:idempotence_local_key"`
+	TargetRoutingNumber      *int64     `gorm:"column:target_routing_number"`
+	Payload                  string     `gorm:"column:payload"`
+	ResponsePayload          *string    `gorm:"column:response_payload"`
+	ResponseStatusCode       *int       `gorm:"column:response_status_code"`
+	Status                   string     `gorm:"column:status"`
+	RetryCount               int        `gorm:"column:retry_count"`
+	NextRetryAt              *time.Time `gorm:"column:next_retry_at"`
+	LastError                string     `gorm:"column:last_error"`
+	CreatedAt                time.Time  `gorm:"column:created_at"`
+	UpdatedAt                time.Time  `gorm:"column:updated_at"`
 }
 
 func (interbankMessageModel) TableName() string { return "core_banking.interbank_message_log" }
@@ -56,46 +56,46 @@ type interbankTxModel struct {
 func (interbankTxModel) TableName() string { return "core_banking.interbank_transaction" }
 
 type interbankReservationModel struct {
-	ID                       int64           `gorm:"column:id;primaryKey;autoIncrement"`
-	InterbankTransactionID   int64           `gorm:"column:interbank_transaction_id"`
-	PostingIndex             int             `gorm:"column:posting_index"`
-	AccountKind              string          `gorm:"column:account_kind"`
-	AccountNum               *string         `gorm:"column:account_num"`
-	ForeignRoutingNumber     *int64          `gorm:"column:foreign_routing_number"`
-	ForeignID                *string         `gorm:"column:foreign_id"`
-	AssetType                string          `gorm:"column:asset_type"`
-	AssetCurrency            *string         `gorm:"column:asset_currency"`
-	AssetTicker              *string         `gorm:"column:asset_ticker"`
-	AssetNegotiationRouting  *int64          `gorm:"column:asset_negotiation_routing"`
-	AssetNegotiationLocalID  *string         `gorm:"column:asset_negotiation_local_id"`
-	Amount                   decimal.Decimal `gorm:"column:amount"`
-	Reserved                 bool            `gorm:"column:reserved"`
-	CreatedAt                time.Time       `gorm:"column:created_at"`
+	ID                      int64           `gorm:"column:id;primaryKey;autoIncrement"`
+	InterbankTransactionID  int64           `gorm:"column:interbank_transaction_id"`
+	PostingIndex            int             `gorm:"column:posting_index"`
+	AccountKind             string          `gorm:"column:account_kind"`
+	AccountNum              *string         `gorm:"column:account_num"`
+	ForeignRoutingNumber    *int64          `gorm:"column:foreign_routing_number"`
+	ForeignID               *string         `gorm:"column:foreign_id"`
+	AssetType               string          `gorm:"column:asset_type"`
+	AssetCurrency           *string         `gorm:"column:asset_currency"`
+	AssetTicker             *string         `gorm:"column:asset_ticker"`
+	AssetNegotiationRouting *int64          `gorm:"column:asset_negotiation_routing"`
+	AssetNegotiationLocalID *string         `gorm:"column:asset_negotiation_local_id"`
+	Amount                  decimal.Decimal `gorm:"column:amount"`
+	Reserved                bool            `gorm:"column:reserved"`
+	CreatedAt               time.Time       `gorm:"column:created_at"`
 }
 
 func (interbankReservationModel) TableName() string { return "core_banking.interbank_reservation" }
 
 type interbankNegotiationModel struct {
-	ID                          int64           `gorm:"column:id;primaryKey;autoIncrement"`
-	NegotiationRoutingNumber    int64           `gorm:"column:negotiation_routing_number"`
-	NegotiationForeignID        string          `gorm:"column:negotiation_foreign_id"`
-	StockTicker                 string          `gorm:"column:stock_ticker"`
-	SettlementDate              time.Time       `gorm:"column:settlement_date"`
-	PriceCurrency               string          `gorm:"column:price_currency"`
-	PriceAmount                 decimal.Decimal `gorm:"column:price_amount"`
-	PremiumCurrency             string          `gorm:"column:premium_currency"`
-	PremiumAmount               decimal.Decimal `gorm:"column:premium_amount"`
-	Amount                      int32           `gorm:"column:amount"`
-	BuyerRoutingNumber          int64           `gorm:"column:buyer_routing_number"`
-	BuyerID                     string          `gorm:"column:buyer_id"`
-	SellerRoutingNumber         int64           `gorm:"column:seller_routing_number"`
-	SellerID                    string          `gorm:"column:seller_id"`
-	LastModifiedRoutingNumber   int64           `gorm:"column:last_modified_routing_number"`
-	LastModifiedID              string          `gorm:"column:last_modified_id"`
-	IsOngoing                   bool            `gorm:"column:is_ongoing"`
-	Status                      string          `gorm:"column:status"`
-	CreatedAt                   time.Time       `gorm:"column:created_at"`
-	UpdatedAt                   time.Time       `gorm:"column:updated_at"`
+	ID                        int64           `gorm:"column:id;primaryKey;autoIncrement"`
+	NegotiationRoutingNumber  int64           `gorm:"column:negotiation_routing_number"`
+	NegotiationForeignID      string          `gorm:"column:negotiation_foreign_id"`
+	StockTicker               string          `gorm:"column:stock_ticker"`
+	SettlementDate            time.Time       `gorm:"column:settlement_date"`
+	PriceCurrency             string          `gorm:"column:price_currency"`
+	PriceAmount               decimal.Decimal `gorm:"column:price_amount"`
+	PremiumCurrency           string          `gorm:"column:premium_currency"`
+	PremiumAmount             decimal.Decimal `gorm:"column:premium_amount"`
+	Amount                    int32           `gorm:"column:amount"`
+	BuyerRoutingNumber        int64           `gorm:"column:buyer_routing_number"`
+	BuyerID                   string          `gorm:"column:buyer_id"`
+	SellerRoutingNumber       int64           `gorm:"column:seller_routing_number"`
+	SellerID                  string          `gorm:"column:seller_id"`
+	LastModifiedRoutingNumber int64           `gorm:"column:last_modified_routing_number"`
+	LastModifiedID            string          `gorm:"column:last_modified_id"`
+	IsOngoing                 bool            `gorm:"column:is_ongoing"`
+	Status                    string          `gorm:"column:status"`
+	CreatedAt                 time.Time       `gorm:"column:created_at"`
+	UpdatedAt                 time.Time       `gorm:"column:updated_at"`
 }
 
 func (interbankNegotiationModel) TableName() string { return "core_banking.interbank_negotiation" }
@@ -121,7 +121,9 @@ type interbankOptionContractModel struct {
 	UpdatedAt                time.Time       `gorm:"column:updated_at"`
 }
 
-func (interbankOptionContractModel) TableName() string { return "core_banking.interbank_option_contract" }
+func (interbankOptionContractModel) TableName() string {
+	return "core_banking.interbank_option_contract"
+}
 
 // ─── Repository implementacija ───────────────────────────────────────────────
 
@@ -533,9 +535,9 @@ func (r *interbankRepository) UpdateNegotiation(ctx context.Context, n *domain.I
 // — public_shares.quantity je već "javni režim" za OTC. Vraća listu po tickerima.
 func (r *interbankRepository) ListPublicStocks(ctx context.Context) ([]domain.PublicStock, error) {
 	type row struct {
-		Ticker  string `gorm:"column:ticker"`
-		UserID  int64  `gorm:"column:user_id"`
-		Qty     int32  `gorm:"column:qty"`
+		Ticker string `gorm:"column:ticker"`
+		UserID int64  `gorm:"column:user_id"`
+		Qty    int32  `gorm:"column:qty"`
 	}
 	var rows []row
 	err := r.db.WithContext(ctx).Raw(`

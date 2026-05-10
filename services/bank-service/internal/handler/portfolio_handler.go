@@ -103,22 +103,22 @@ type buyLotResponse struct {
 }
 
 type holdingResponse struct {
-	ListingID           string  `json:"listingId"`
-	Ticker              string  `json:"ticker"`
-	Name                string  `json:"name"`
-	ListingType         string  `json:"listingType"`
-	Quantity            int64   `json:"quantity"`
-	AvailableQuantity   int64   `json:"availableQuantity"`
-	CurrentPrice        float64 `json:"currentPrice"`
-	AvgBuyPrice         float64 `json:"avgBuyPrice"`
-	Profit              float64 `json:"profit"`
-	LastModified        string  `json:"lastModified"`
-	AccountID           string  `json:"accountId"`
-	PublicShares        int     `json:"publicShares"`
-	PublicQuantity      int     `json:"publicQuantity"`
-	ReservedInContracts int     `json:"reservedInContracts"`
-	DetailsJSON         string  `json:"detailsJson"`
-	BuyLots           []buyLotResponse `json:"buyLots"`
+	ListingID           string           `json:"listingId"`
+	Ticker              string           `json:"ticker"`
+	Name                string           `json:"name"`
+	ListingType         string           `json:"listingType"`
+	Quantity            int64            `json:"quantity"`
+	AvailableQuantity   int64            `json:"availableQuantity"`
+	CurrentPrice        float64          `json:"currentPrice"`
+	AvgBuyPrice         float64          `json:"avgBuyPrice"`
+	Profit              float64          `json:"profit"`
+	LastModified        string           `json:"lastModified"`
+	AccountID           string           `json:"accountId"`
+	PublicShares        int              `json:"publicShares"`
+	PublicQuantity      int              `json:"publicQuantity"`
+	ReservedInContracts int              `json:"reservedInContracts"`
+	DetailsJSON         string           `json:"detailsJson"`
+	BuyLots             []buyLotResponse `json:"buyLots"`
 }
 
 type portfolioResponse struct {
@@ -484,7 +484,7 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 			PublicQuantity:      pub,
 			ReservedInContracts: reservedMap[row.ListingID],
 			DetailsJSON:         listing.DetailsJSON,
-			BuyLots:           lots,
+			BuyLots:             lots,
 		})
 	}
 

@@ -2,15 +2,15 @@
 //
 // Klijentski endpoint-i nad interbank modulom (autentifikacija JWT):
 //
-//   POST /bank/interbank/payments         — kreiranje međubankarskog plaćanja
-//   GET  /bank/interbank/public-stocks    — agregirana lista (lokalno + peer banka)
-//   POST /bank/interbank/negotiations             — kupac inicira pregovaranje (forward to peer)
-//   PUT  /bank/interbank/negotiations/{routing}/{id}   — kontraponuda
-//   GET  /bank/interbank/negotiations/{routing}/{id}   — stanje
-//   DELETE /bank/interbank/negotiations/{routing}/{id} — povlačenje
-//   POST /bank/interbank/negotiations/{routing}/{id}/accept — accept
-//   GET  /bank/interbank/contracts        — moji opcioni ugovori
-//   POST /bank/interbank/contracts/{routing}/{id}/exercise — izvršavanje opcije
+//	POST /bank/interbank/payments         — kreiranje međubankarskog plaćanja
+//	GET  /bank/interbank/public-stocks    — agregirana lista (lokalno + peer banka)
+//	POST /bank/interbank/negotiations             — kupac inicira pregovaranje (forward to peer)
+//	PUT  /bank/interbank/negotiations/{routing}/{id}   — kontraponuda
+//	GET  /bank/interbank/negotiations/{routing}/{id}   — stanje
+//	DELETE /bank/interbank/negotiations/{routing}/{id} — povlačenje
+//	POST /bank/interbank/negotiations/{routing}/{id}/accept — accept
+//	GET  /bank/interbank/contracts        — moji opcioni ugovori
+//	POST /bank/interbank/contracts/{routing}/{id}/exercise — izvršavanje opcije
 package handler
 
 import (
@@ -211,17 +211,17 @@ func (h *InterbankPaymentHandler) handlePublicStocks(w http.ResponseWriter, r *h
 // ─── /bank/interbank/negotiations ────────────────────────────────────────────
 
 type createNegotiationReq struct {
-	Stock          string          `json:"ticker"`
-	SettlementDate string          `json:"settlementDate"`
-	PriceCurrency  string          `json:"priceCurrency"`
-	PriceAmount    decimal.Decimal `json:"priceAmount"`
-	PremiumCurrency string         `json:"premiumCurrency"`
+	Stock           string          `json:"ticker"`
+	SettlementDate  string          `json:"settlementDate"`
+	PriceCurrency   string          `json:"priceCurrency"`
+	PriceAmount     decimal.Decimal `json:"priceAmount"`
+	PremiumCurrency string          `json:"premiumCurrency"`
 	PremiumAmount   decimal.Decimal `json:"premiumAmount"`
-	BuyerRouting   int64           `json:"buyerRoutingNumber"`
-	BuyerID        string          `json:"buyerId"`
-	SellerRouting  int64           `json:"sellerRoutingNumber"`
-	SellerID       string          `json:"sellerId"`
-	Amount         int32           `json:"amount"`
+	BuyerRouting    int64           `json:"buyerRoutingNumber"`
+	BuyerID         string          `json:"buyerId"`
+	SellerRouting   int64           `json:"sellerRoutingNumber"`
+	SellerID        string          `json:"sellerId"`
+	Amount          int32           `json:"amount"`
 }
 
 func (h *InterbankPaymentHandler) handleCreateNegotiation(w http.ResponseWriter, r *http.Request, userID int64) {

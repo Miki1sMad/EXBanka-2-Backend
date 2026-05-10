@@ -4,10 +4,10 @@
 // si-tx-proto transaction protocol-a.
 //
 // Accept tok (po protokolu):
-//   1) Buyer credit premium     ← prema Posting protokolu
-//   2) Seller debit premium
-//   3) Buyer debit optionContract
-//   4) Seller credit optionContract
+//  1. Buyer credit premium     ← prema Posting protokolu
+//  2. Seller debit premium
+//  3. Buyer debit optionContract
+//  4. Seller credit optionContract
 //
 // Exercise tok:
 //   - debit OPTION account za pricePerUnit * amount novca

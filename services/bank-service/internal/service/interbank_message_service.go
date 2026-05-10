@@ -120,7 +120,7 @@ func (s *InterbankMessageService) SendMessage(ctx context.Context, m *domain.Int
 	}
 
 	// Reanimiraj poruku iz JSON-a u InterbankMessage.
-	var inner json.RawMessage = json.RawMessage(m.Payload)
+	inner := json.RawMessage(m.Payload)
 	envelope := domain.InterbankMessage{
 		IdempotenceKey: domain.IdempotenceKey{
 			RoutingNumber:       m.IdempotenceRoutingNumber,

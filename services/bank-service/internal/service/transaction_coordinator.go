@@ -2,20 +2,20 @@
 //
 // TransactionCoordinator orkestrira protokol između banaka:
 //
-//   InitiateInterbankPayment:
-//     1. Kreira Transaction objekat sa postings (sender − , receiver +).
-//     2. Lokalno priprema (LocalTransactionExecutor.Prepare).
-//     3. Šalje NEW_TX drugoj banci preko InterbankMessageService.
-//     4. Ako druga banka vrati YES → šalje COMMIT_TX i lokalno commit-uje.
-//     5. Ako vrati NO ili ne odgovori → šalje ROLLBACK_TX i lokalno rollback-uje.
+//	InitiateInterbankPayment:
+//	  1. Kreira Transaction objekat sa postings (sender − , receiver +).
+//	  2. Lokalno priprema (LocalTransactionExecutor.Prepare).
+//	  3. Šalje NEW_TX drugoj banci preko InterbankMessageService.
+//	  4. Ako druga banka vrati YES → šalje COMMIT_TX i lokalno commit-uje.
+//	  5. Ako vrati NO ili ne odgovori → šalje ROLLBACK_TX i lokalno rollback-uje.
 //
-//   HandleIncomingMessage:
-//     - NEW_TX     → Prepare i vraća TransactionVote.
-//     - COMMIT_TX  → Commit i vraća 204.
-//     - ROLLBACK_TX→ Rollback i vraća 204.
+//	HandleIncomingMessage:
+//	  - NEW_TX     → Prepare i vraća TransactionVote.
+//	  - COMMIT_TX  → Commit i vraća 204.
+//	  - ROLLBACK_TX→ Rollback i vraća 204.
 //
-//   Idempotency: handler proverava InterbankMessageService.LookupIncomingResponse
-//   pre obrade. Ako poruka već postoji, vraća se identičan odgovor.
+//	Idempotency: handler proverava InterbankMessageService.LookupIncomingResponse
+//	pre obrade. Ako poruka već postoji, vraća se identičan odgovor.
 package service
 
 import (
@@ -34,14 +34,14 @@ import (
 )
 
 type TransactionCoordinator struct {
-	db                 *gorm.DB
-	repo               domain.InterbankRepository
-	executor           *LocalTransactionExecutor
-	msgSvc             *InterbankMessageService
-	client             domain.InterbankClient
-	ourRoutingNumber   int64
-	peerRoutingNumber  int64
-	accountPrefix      string
+	db                *gorm.DB
+	repo              domain.InterbankRepository
+	executor          *LocalTransactionExecutor
+	msgSvc            *InterbankMessageService
+	client            domain.InterbankClient
+	ourRoutingNumber  int64
+	peerRoutingNumber int64
+	accountPrefix     string
 }
 
 // NewTransactionCoordinator konstruktor.
@@ -376,8 +376,7 @@ func (c *TransactionCoordinator) HandleIncomingMessage(ctx context.Context, msg 
 		}
 		var body interface{}
 		if prev.ResponsePayload != nil {
-			var anyVal json.RawMessage = json.RawMessage(*prev.ResponsePayload)
-			body = anyVal
+			body = json.RawMessage(*prev.ResponsePayload)
 		}
 		return statusCode, body, nil
 	}
@@ -388,8 +387,8 @@ func (c *TransactionCoordinator) HandleIncomingMessage(ctx context.Context, msg 
 		return http.StatusInternalServerError, nil, err
 	}
 
-	// 3) Dispatch
-	statusCode := http.StatusOK
+	// 3) Dispatch — svaka case-grana setuje statusCode pre korišćenja.
+	var statusCode int
 	var responseBody interface{}
 
 	switch msg.MessageType {

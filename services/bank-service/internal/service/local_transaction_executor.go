@@ -4,11 +4,12 @@
 // Jedan executor radi nad lokalnom GORM bazom (core_banking schema).
 //
 // Glavni delovi:
-//   Prepare  — proveri balansiranost, postojeće račune, dovoljnost sredstava
-//              i rezerviše ih (rezervisana_sredstva ili public_shares).
-//   Commit   — primeni rezervaciju kao stvarnu promenu balansa, knjiži u
-//              core_banking.transakcija (tip 'INTERBANK').
-//   Rollback — oslobodi rezervisane resurse.
+//
+//	Prepare  — proveri balansiranost, postojeće račune, dovoljnost sredstava
+//	           i rezerviše ih (rezervisana_sredstva ili public_shares).
+//	Commit   — primeni rezervaciju kao stvarnu promenu balansa, knjiži u
+//	           core_banking.transakcija (tip 'INTERBANK').
+//	Rollback — oslobodi rezervisane resurse.
 package service
 
 import (

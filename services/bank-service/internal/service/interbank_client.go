@@ -1,13 +1,14 @@
 // Package service — interbank_client.go
 //
 // HTTP klijent za komunikaciju sa drugom bankom po si-tx-proto:
-//   POST /interbank
-//   GET  /public-stock
-//   POST /negotiations
-//   PUT  /negotiations/{routing}/{id}
-//   GET  /negotiations/{routing}/{id}
-//   DELETE /negotiations/{routing}/{id}
-//   GET  /negotiations/{routing}/{id}/accept
+//
+//	POST /interbank
+//	GET  /public-stock
+//	POST /negotiations
+//	PUT  /negotiations/{routing}/{id}
+//	GET  /negotiations/{routing}/{id}
+//	DELETE /negotiations/{routing}/{id}
+//	GET  /negotiations/{routing}/{id}/accept
 //
 // Bez mock-a, bez stub-ova, bez fake success-a. Ako URL druge banke nije
 // podešen, klijent vraća domain.ErrInterbankPeerNotConfigured.
@@ -30,11 +31,11 @@ import (
 
 // interbankClient implementira domain.InterbankClient.
 type interbankClient struct {
-	httpClient    *http.Client
-	peerBaseURL   string
-	peerAPIKey    string
-	peerRouting   int64
-	ourRouting    int64
+	httpClient  *http.Client
+	peerBaseURL string
+	peerAPIKey  string
+	peerRouting int64
+	ourRouting  int64
 }
 
 // InterbankClientConfig — strukturisani config za konstruktor.
