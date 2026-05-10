@@ -86,6 +86,28 @@ type Config struct {
 	// OTC ponuda i ugovora kako bi se intra-bank i inter-bank transakcije mogle razlikovati.
 	// Default: 1 (prva i jedina banka u dev okruženju).
 	OwnBankID int64 // env: BANK_ID
+
+	// ── Interbank (si-tx-proto) ──────────────────────────────────────────────
+	// InterbankRoutingNumber — routingNumber ove banke (prve 3 cifre brojeva računa).
+	InterbankRoutingNumber int64 // env: INTERBANK_ROUTING_NUMBER
+	// InterbankAPIKey — naš API ključ koji druga banka mora poslati u X-Api-Key
+	// kada šalje zahtev na /interbank ili na OTC endpoint-e.
+	InterbankAPIKey string // env: INTERBANK_API_KEY
+	// InterbankPeerBaseURL — base URL druge banke (npr. https://other-bank.example).
+	// Ako je prazan, slanje međubankarskih poruka vraća konfiguracijsku grešku.
+	InterbankPeerBaseURL string // env: INTERBANK_PEER_BASE_URL
+	// InterbankPeerAPIKey — API ključ koji šaljemo drugoj banci u X-Api-Key headeru.
+	InterbankPeerAPIKey string // env: INTERBANK_PEER_API_KEY
+	// InterbankPeerRoutingNumber — routingNumber druge banke (prve 3 cifre).
+	InterbankPeerRoutingNumber int64 // env: INTERBANK_PEER_ROUTING_NUMBER
+	// InterbankRetryMaxAttempts — koliko puta retry worker pokušava neuspele poruke.
+	InterbankRetryMaxAttempts int // env: INTERBANK_RETRY_MAX_ATTEMPTS (default 10)
+	// InterbankRetryBackoffSeconds — minimalni interval između retry-ja (default 30 s).
+	InterbankRetryBackoffSeconds int // env: INTERBANK_RETRY_BACKOFF_SECONDS (default 30)
+	// InterbankHTTPTimeoutSeconds — HTTP timeout za poziv ka drugoj banci.
+	InterbankHTTPTimeoutSeconds int // env: INTERBANK_HTTP_TIMEOUT_SECONDS (default 15)
+	// InterbankBankDisplayName — prikazno ime ove banke za GET /user/{routing}/{id}.
+	InterbankBankDisplayName string // env: INTERBANK_BANK_DISPLAY_NAME
 }
 
 // Load reads ENV vars and returns a populated Config.
@@ -134,6 +156,16 @@ func Load() (*Config, error) {
 		ListingRequireLiveQuotes:      loadListingRequireLiveQuotes(),
 		StateRevenueAccountID:         getEnvInt64("STATE_REVENUE_ACCOUNT_ID", 0),
 		OwnBankID:                     getEnvInt64("BANK_ID", 1),
+
+		InterbankRoutingNumber:       getEnvInt64("INTERBANK_ROUTING_NUMBER", 0),
+		InterbankAPIKey:              os.Getenv("INTERBANK_API_KEY"),
+		InterbankPeerBaseURL:         os.Getenv("INTERBANK_PEER_BASE_URL"),
+		InterbankPeerAPIKey:          os.Getenv("INTERBANK_PEER_API_KEY"),
+		InterbankPeerRoutingNumber:   getEnvInt64("INTERBANK_PEER_ROUTING_NUMBER", 0),
+		InterbankRetryMaxAttempts:    getEnvInt("INTERBANK_RETRY_MAX_ATTEMPTS", 10),
+		InterbankRetryBackoffSeconds: getEnvInt("INTERBANK_RETRY_BACKOFF_SECONDS", 30),
+		InterbankHTTPTimeoutSeconds:  getEnvInt("INTERBANK_HTTP_TIMEOUT_SECONDS", 15),
+		InterbankBankDisplayName:     getEnv("INTERBANK_BANK_DISPLAY_NAME", "EXBanka 2"),
 	}, nil
 }
 

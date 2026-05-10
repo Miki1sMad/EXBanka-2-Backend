@@ -257,6 +257,71 @@ func main() {
 	)
 	otcContractHandler := handler.NewOTCContractHandler(otcContractService, userClient, cfg.JWTAccessSecret)
 
+	// ── Interbank (si-tx-proto) ──────────────────────────────────────────────
+	interbankRepo := repository.NewInterbankRepository(db)
+	interbankClient := service.NewInterbankClient(service.InterbankClientConfig{
+		PeerBaseURL:        cfg.InterbankPeerBaseURL,
+		PeerAPIKey:         cfg.InterbankPeerAPIKey,
+		PeerRoutingNumber:  cfg.InterbankPeerRoutingNumber,
+		OurRoutingNumber:   cfg.InterbankRoutingNumber,
+		HTTPTimeoutSeconds: cfg.InterbankHTTPTimeoutSeconds,
+	})
+	interbankMsgSvc := service.NewInterbankMessageService(
+		interbankRepo,
+		interbankClient,
+		cfg.InterbankRoutingNumber,
+		cfg.InterbankRetryMaxAttempts,
+		cfg.InterbankRetryBackoffSeconds,
+	)
+	interbankExecutor := service.NewLocalTransactionExecutor(
+		db,
+		interbankRepo,
+		cfg.InterbankRoutingNumber,
+		"", // accountPrefix se izvodi iz routingNumber-a
+	)
+	interbankCoordinator := service.NewTransactionCoordinator(
+		db,
+		interbankRepo,
+		interbankExecutor,
+		interbankMsgSvc,
+		interbankClient,
+		cfg.InterbankRoutingNumber,
+		cfg.InterbankPeerRoutingNumber,
+		"",
+	)
+	interbankOTCSvc := service.NewInterbankOTCService(interbankRepo, cfg.InterbankRoutingNumber)
+	interbankOptionSvc := service.NewInterbankOptionContractService(
+		interbankRepo,
+		interbankCoordinator,
+		cfg.InterbankRoutingNumber,
+	)
+	interbankProtoHandler := handler.NewInterbankHandler(
+		interbankCoordinator,
+		interbankOTCSvc,
+		interbankOptionSvc,
+		interbankRepo,
+		cfg.InterbankAPIKey,
+		cfg.InterbankRoutingNumber,
+		cfg.InterbankBankDisplayName,
+		userClient,
+	)
+	interbankClientHandler := handler.NewInterbankPaymentHandler(
+		interbankCoordinator,
+		interbankOTCSvc,
+		interbankOptionSvc,
+		interbankClient,
+		interbankRepo,
+		cfg.JWTAccessSecret,
+		cfg.InterbankRoutingNumber,
+		userClient,
+	)
+	if cfg.InterbankPeerBaseURL == "" {
+		log.Printf("[interbank] INTERBANK_PEER_BASE_URL nije postavljen — slanje međubankarskih poruka će vraćati grešku konfiguracije sve dok se ne podesi")
+	} else {
+		log.Printf("[interbank] peer URL=%s, peerRoutingNumber=%d, ourRoutingNumber=%d",
+			cfg.InterbankPeerBaseURL, cfg.InterbankPeerRoutingNumber, cfg.InterbankRoutingNumber)
+	}
+
 	// ── 4. Auth interceptor ──────────────────────────────────────────────────
 	// Sve rute zahtevaju validan JWT access token osim gRPC health check-a.
 	authInterceptor := auth.NewAuthInterceptor(cfg.JWTAccessSecret, []string{
@@ -339,6 +404,22 @@ func main() {
 	// OTC Contracts & SAGA (Celina 4) — /api/otc/contracts...
 	httpMux.Handle("/api/otc/contracts", otcContractHandler)  // GET — lista ugovora korisnika
 	httpMux.Handle("/api/otc/contracts/", otcContractHandler) // GET /{id}, POST /{id}/execute
+
+	// ── Interbank si-tx-proto (POST /interbank, GET /public-stock, /negotiations, /user) ─
+	// Dolazni protokol-ranog tipa endpointi — prima ih druga banka. X-Api-Key auth.
+	httpMux.Handle("POST /interbank", http.HandlerFunc(interbankProtoHandler.HandleInterbank))
+	httpMux.Handle("GET /public-stock", http.HandlerFunc(interbankProtoHandler.HandlePublicStock))
+	httpMux.Handle("/negotiations", http.HandlerFunc(interbankProtoHandler.HandleNegotiations))
+	httpMux.Handle("/negotiations/", http.HandlerFunc(interbankProtoHandler.HandleNegotiations))
+	httpMux.Handle("/user/", http.HandlerFunc(interbankProtoHandler.HandleUserInfo))
+
+	// ── Interbank klijentski endpoint-i (JWT) ────────────────────────────────
+	httpMux.Handle("/bank/interbank/payments", interbankClientHandler)
+	httpMux.Handle("/bank/interbank/public-stocks", interbankClientHandler)
+	httpMux.Handle("/bank/interbank/negotiations", interbankClientHandler)
+	httpMux.Handle("/bank/interbank/negotiations/", interbankClientHandler)
+	httpMux.Handle("/bank/interbank/contracts", interbankClientHandler)
+	httpMux.Handle("/bank/interbank/contracts/", interbankClientHandler)
 	// Bank Profit Portal (Celina 4) — supervisor-only analytics
 	httpMux.Handle("GET /bank/actuary-performance", http.HandlerFunc(bankProfitHandler.ActuaryPerformanceHandler))
 	httpMux.Handle("GET /bank/fund-positions", http.HandlerFunc(bankProfitHandler.FundPositionsHandler))
@@ -395,6 +476,9 @@ func main() {
 	}
 	monthlyTaxWorker := worker.NewMonthlyTaxWorker(taxRunner)
 	go monthlyTaxWorker.Start(ctx)
+
+	// ── 7h. Start InterbankRetryWorker (slanje neuspelih poruka drugoj banci) ─
+	go interbankMsgSvc.RunRetryLoop(ctx, time.Duration(cfg.InterbankRetryBackoffSeconds)*time.Second)
 
 	// ── 7g. Start FundPerformanceWorker (daily snapshot fonda u ponoć) ────────
 	// Adapter dohvata sve fondove, za svaki traži FundValueRSD iz servisa, i

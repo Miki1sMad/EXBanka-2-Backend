@@ -95,22 +95,30 @@ func (h *PortfolioHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // ─── GET /bank/portfolio/my ───────────────────────────────────────────────────
 
+type buyLotResponse struct {
+	OrderID    string  `json:"orderId"`
+	Price      float64 `json:"price"`
+	Quantity   int64   `json:"quantity"`
+	ExecutedAt string  `json:"executedAt"`
+}
+
 type holdingResponse struct {
-	ListingID           string  `json:"listingId"`
-	Ticker              string  `json:"ticker"`
-	Name                string  `json:"name"`
-	ListingType         string  `json:"listingType"`
-	Quantity            int64   `json:"quantity"`
-	AvailableQuantity   int64   `json:"availableQuantity"`
-	CurrentPrice        float64 `json:"currentPrice"`
-	AvgBuyPrice         float64 `json:"avgBuyPrice"`
-	Profit              float64 `json:"profit"`
-	LastModified        string  `json:"lastModified"`
-	AccountID           string  `json:"accountId"`
-	PublicShares        int     `json:"publicShares"`
-	PublicQuantity      int     `json:"publicQuantity"`
-	ReservedInContracts int     `json:"reservedInContracts"`
-	DetailsJSON         string  `json:"detailsJson"`
+	ListingID           string           `json:"listingId"`
+	Ticker              string           `json:"ticker"`
+	Name                string           `json:"name"`
+	ListingType         string           `json:"listingType"`
+	Quantity            int64            `json:"quantity"`
+	AvailableQuantity   int64            `json:"availableQuantity"`
+	CurrentPrice        float64          `json:"currentPrice"`
+	AvgBuyPrice         float64          `json:"avgBuyPrice"`
+	Profit              float64          `json:"profit"`
+	LastModified        string           `json:"lastModified"`
+	AccountID           string           `json:"accountId"`
+	PublicShares        int              `json:"publicShares"`
+	PublicQuantity      int              `json:"publicQuantity"`
+	ReservedInContracts int              `json:"reservedInContracts"`
+	DetailsJSON         string           `json:"detailsJson"`
+	BuyLots             []buyLotResponse `json:"buyLots"`
 }
 
 type portfolioResponse struct {
@@ -353,6 +361,66 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 		reservedMap[rv.ListingID] = rv.Reserved
 	}
 
+	// ── 3b. Load per-order BUY lots (price + executed qty per order) ──────────
+	// One row per BUY order that contributed shares to current holdings.
+	// Price = weighted avg of order_transactions for that order; falls back
+	// to price_per_unit if no transactions exist.
+	type buyLotRow struct {
+		ListingID int64     `gorm:"column:listing_id"`
+		AccountID int64     `gorm:"column:account_id"`
+		OrderID   int64     `gorm:"column:order_id"`
+		Price     float64   `gorm:"column:price"`
+		Quantity  int64     `gorm:"column:qty"`
+		CreatedAt time.Time `gorm:"column:created_at"`
+	}
+	var lotRows []buyLotRow
+	h.db.WithContext(ctx).Raw(`
+		SELECT
+			o.id           AS order_id,
+			o.listing_id,
+			o.account_id,
+			o.created_at,
+			CASE
+				WHEN COALESCE(SUM(ot.executed_quantity), 0) > 0
+				THEN SUM(CAST(ot.executed_price AS FLOAT) * ot.executed_quantity)
+				     / SUM(ot.executed_quantity)
+				ELSE CAST(o.price_per_unit AS FLOAT)
+			END AS price,
+			CASE
+				WHEN COALESCE(SUM(ot.executed_quantity), 0) > 0
+				THEN SUM(ot.executed_quantity)
+				ELSE
+					CASE WHEN o.status = 'DONE'
+						THEN o.quantity
+						ELSE (o.quantity - o.remaining_portions)
+					END
+			END AS qty
+		FROM core_banking.orders o
+		LEFT JOIN core_banking.order_transactions ot ON ot.order_id = o.id
+		WHERE o.user_id = ? AND o.direction = 'BUY'
+		  AND (
+		      (o.status = 'DONE' AND o.is_done = TRUE)
+		      OR (o.status = 'CANCELED' AND (o.quantity - o.remaining_portions) > 0)
+		  )
+		GROUP BY o.id
+		ORDER BY o.created_at ASC
+	`, userID).Scan(&lotRows)
+
+	type lotKey struct{ listingID, accountID int64 }
+	lotMap := make(map[lotKey][]buyLotResponse, len(lotRows))
+	for _, l := range lotRows {
+		if l.Quantity <= 0 {
+			continue
+		}
+		k := lotKey{l.ListingID, l.AccountID}
+		lotMap[k] = append(lotMap[k], buyLotResponse{
+			OrderID:    strconv.FormatInt(l.OrderID, 10),
+			Price:      l.Price,
+			Quantity:   l.Quantity,
+			ExecutedAt: l.CreatedAt.UTC().Format(time.RFC3339),
+		})
+	}
+
 	// ── 4. Load tax data (paid this year, unpaid this month) ─────────────────
 	// Tax applies only to individual clients; the bank's trezor account is exempt.
 	var taxPaid, taxUnpaid float64
@@ -396,6 +464,10 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 		}
 
 		pub := pubMap[row.ListingID]
+		lots := lotMap[lotKey{row.ListingID, row.AccountID}]
+		if lots == nil {
+			lots = []buyLotResponse{}
+		}
 		holdings = append(holdings, holdingResponse{
 			ListingID:           strconv.FormatInt(row.ListingID, 10),
 			Ticker:              listing.Ticker,
@@ -412,6 +484,7 @@ func (h *PortfolioHandler) getMyPortfolio(w http.ResponseWriter, r *http.Request
 			PublicQuantity:      pub,
 			ReservedInContracts: reservedMap[row.ListingID],
 			DetailsJSON:         listing.DetailsJSON,
+			BuyLots:             lots,
 		})
 	}
 

@@ -12,3 +12,4 @@
 * **Responsibilities:** Background worker for asynchronous email delivery.
 * **Event Consumer:** Subscribes to the `email_notifications` queue.
 * **Processing:** Parses AMQP payloads, renders MIME-compliant HTML templates (Activation, Reset, Confirmation), and dispatches via SMTP.
+*odbrana*
