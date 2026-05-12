@@ -16,6 +16,7 @@ type Config struct {
 	SMTPPass    string // SMTP_PASS (Gmail app password; never logged)
 	FromEmail   string // FROM_EMAIL (sender address)
 	FrontendURL string // FRONTEND_URL (base URL for activation/reset links)
+	MetricsAddr string // METRICS_ADDR (npr. ":8083") — HTTP listener za /metrics
 }
 
 // LoadConfig returns a Config populated from environment variables.
@@ -29,6 +30,7 @@ func LoadConfig() *Config {
 		SMTPPass:    trim(getEnv("SMTP_PASS", "")),
 		FromEmail:   trim(getEnv("FROM_EMAIL", "")),
 		FrontendURL: trim(getEnv("FRONTEND_URL", "http://localhost:3001")),
+		MetricsAddr: trim(getEnv("METRICS_ADDR", ":8083")),
 	}
 }
 

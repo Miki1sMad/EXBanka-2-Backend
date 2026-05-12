@@ -8,9 +8,11 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/joho/godotenv"
 
@@ -18,6 +20,7 @@ import (
 	"banka-backend/services/notification-service/internal/service"
 	"banka-backend/services/notification-service/internal/smtp"
 	"banka-backend/services/notification-service/internal/transport"
+	"banka-backend/shared/metrics"
 )
 
 func main() {
@@ -33,18 +36,39 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Prometheus gRPC server metrike — passed as first interceptor.
+	srvMetrics := metrics.NewServerMetrics()
+
 	// gRPC server — prima sinhronizovane zahteve od bank-service (OTP emailovi).
 	grpcAddr := getEnv("GRPC_ADDR", "0.0.0.0:50053")
-	go transport.StartGRPCServer(ctx, grpcAddr, emailSvc)
+	go transport.StartGRPCServer(ctx, grpcAddr, emailSvc, srvMetrics.UnaryServerInterceptor())
 
 	// RabbitMQ consumer — prima asinhroni eventi (ACTIVATION, ACCOUNT_CREATED, CARD_OTP itd.)
 	go transport.StartConsumer(cfg, emailSvc)
+
+	// Standalone HTTP listener samo za /metrics (notification-service nema gateway).
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", metrics.Handler())
+	metricsSrv := &http.Server{
+		Addr:              cfg.MetricsAddr,
+		Handler:           metricsMux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	go func() {
+		log.Printf("[metrics] HTTP listening on %s", cfg.MetricsAddr)
+		if err := metricsSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("[metrics] ListenAndServe error: %v", err)
+		}
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	log.Println("[main] shutdown signal received, exiting")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+	_ = metricsSrv.Shutdown(shutdownCtx)
 }
 
 func getEnv(key, fallback string) string {
