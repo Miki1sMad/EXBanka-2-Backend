@@ -29,6 +29,7 @@ import (
 	"banka-backend/services/user-service/internal/transport"
 	"banka-backend/services/user-service/internal/utils"
 	auth "banka-backend/shared/auth"
+	"banka-backend/shared/metrics"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx" driver for database/sql
@@ -73,6 +74,10 @@ func main() {
 	// AuthInterceptor is prepended so it runs before logging and can reject
 	// unauthenticated requests early. The secret is read from JWT_ACCESS_SECRET
 	// (falls back to "change-me-access-secret" in config.Load for local dev).
+	// Prometheus gRPC server metrike — interceptor je PRVI u chainu kako bi
+	// se merili i unauthorized pozivi (auth ide odmah posle).
+	srvMetrics := metrics.NewServerMetrics()
+
 	authInterceptor := auth.NewAuthInterceptor(cfg.JWTAccessSecret, []string{
 		pb.UserService_HealthCheck_FullMethodName,
 		pb.UserService_Login_FullMethodName,
@@ -82,7 +87,7 @@ func main() {
 		pb.UserService_ForgotPassword_FullMethodName, // unauthenticated — only an email is provided
 		pb.UserService_ResetPassword_FullMethodName,  // reset token is the credential, no access token
 	})
-	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, authInterceptor.Unary())
+	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, srvMetrics.UnaryServerInterceptor(), authInterceptor.Unary())
 
 	// ── bank-service client (optional — nil disables actuary sync) ──────────────
 	var bankClient userhandler.BankActuaryClient
@@ -95,6 +100,8 @@ func main() {
 
 	handler := userhandler.NewUserHandler(querier, sqlDB, cfg.JWTAccessSecret, cfg.JWTRefreshSecret, cfg.JWTActivationSecret, utils.NewAMQPPublisher(cfg.RabbitMQURL), utils.NewAMQPUserCreatedPublisher(cfg.RabbitMQURL), userservice.NewClientService(querier), bankClient)
 	pb.RegisterUserServiceServer(grpcSrv.Server(), handler)
+	// Inicijalizuj nulte vrednosti za sve metode (lepše Grafana grafike pre prvog poziva).
+	srvMetrics.InitializeMetrics(grpcSrv.Server())
 
 	// ── 4. gRPC-Gateway: dial the local gRPC server ──────────────────────────
 	// A background context is used for the gateway connection; it is cancelled
@@ -131,9 +138,15 @@ func main() {
 	// Obmotaj gateway mux sa custom handlerom za /client/{id}/trade-permission
 	permHandler := userhandler.NewClientPermissionHandler(sqlDB, cfg.JWTAccessSecret)
 
+	// Root HTTP mux: /metrics ide direktno na Prometheus handler (bez auth wrappera);
+	// sve ostalo prolazi kroz HTTP metrics middleware → permHandler → gateway mux.
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/metrics", metrics.Handler())
+	rootMux.Handle("/", metrics.HTTPMiddleware(permHandler.WrapMux(mux)))
+
 	gatewaySrv := &http.Server{
 		Addr:         cfg.HTTPAddr,
-		Handler:      permHandler.WrapMux(mux),
+		Handler:      rootMux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,

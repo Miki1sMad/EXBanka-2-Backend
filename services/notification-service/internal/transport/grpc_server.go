@@ -67,13 +67,20 @@ func (s *NotificationGRPCServer) SendEmail(_ context.Context, req *notifv1.SendE
 // StartGRPCServer pokreće gRPC server na datoj adresi i blokira dok se ctx ne otkaže.
 // Dizajniran da se poziva kao goroutine iz main-a.
 // Graceful shutdown se pokreće automatski kada ctx bude otkazan.
-func StartGRPCServer(ctx context.Context, addr string, emailSvc domain.NotificationService) {
+//
+// extraInterceptors se ulančavaju kao unary server interceptori (npr. Prometheus
+// metrike). Stream RPC-ovi se trenutno ne koriste u notification-service.
+func StartGRPCServer(ctx context.Context, addr string, emailSvc domain.NotificationService, extraInterceptors ...grpc.UnaryServerInterceptor) {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalf("[grpc] listen %s: %v", addr, err)
 	}
 
-	srv := grpc.NewServer()
+	var opts []grpc.ServerOption
+	if len(extraInterceptors) > 0 {
+		opts = append(opts, grpc.ChainUnaryInterceptor(extraInterceptors...))
+	}
+	srv := grpc.NewServer(opts...)
 	notifv1.RegisterNotificationServiceServer(srv, NewNotificationGRPCServer(emailSvc))
 
 	go func() {

@@ -34,6 +34,7 @@ import (
 	"banka-backend/services/bank-service/internal/transport"
 	"banka-backend/services/bank-service/internal/worker"
 	auth "banka-backend/shared/auth"
+	"banka-backend/shared/metrics"
 
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
@@ -329,9 +330,14 @@ func main() {
 	})
 
 	// ── 5. gRPC server ───────────────────────────────────────────────────────
-	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, authInterceptor.Unary())
+	// Prometheus gRPC server metrike — interceptor je PRVI u chainu (pre auth)
+	// kako bi se merili i unauthorized pozivi.
+	srvMetrics := metrics.NewServerMetrics()
+	grpcSrv := transport.NewGRPCServer(cfg.GRPCAddr, srvMetrics.UnaryServerInterceptor(), authInterceptor.Unary())
 	pb.RegisterBankaServiceServer(grpcSrv.Server(), bankHandler)
 	pbactuary.RegisterActuaryServiceServer(grpcSrv.Server(), actuaryHandler)
+	// Inicijalizuj nulte vrednosti za sve metode (lepše Grafana grafike pre prvog poziva).
+	srvMetrics.InitializeMetrics(grpcSrv.Server())
 
 	// ── 6. gRPC-Gateway: dial the local gRPC server ──────────────────────────
 	// Derive the gateway target from cfg.GRPCAddr so they always stay in sync.
@@ -426,9 +432,15 @@ func main() {
 
 	httpMux.Handle("/", gwMux) // sve ostalo → gRPC-Gateway
 
+	// Root HTTP mux: /metrics ide direktno na Prometheus handler (bez middleware-a
+	// koji bi nadkomplikovao scrape); sav ostali saobraćaj se instrumentira.
+	rootMux := http.NewServeMux()
+	rootMux.Handle("/metrics", metrics.Handler())
+	rootMux.Handle("/", metrics.HTTPMiddleware(httpMux))
+
 	gatewaySrv := &http.Server{
 		Addr:         cfg.HTTPAddr,
-		Handler:      httpMux,
+		Handler:      rootMux,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
