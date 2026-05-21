@@ -158,7 +158,9 @@ SELECT
     phone_number,
     address,
     is_active,
-    created_at
+    created_at,
+    failed_login_attempts,
+    account_locked_until
 FROM users
 WHERE email = $1
 LIMIT 1;
@@ -251,3 +253,34 @@ SET password_hash = $2,
     salt_password = $3,
     is_active     = TRUE
 WHERE id = $1;
+
+-- ─── Brute-force protection ───────────────────────────────────────────────────
+
+-- name: RecordFailedLogin :one
+-- Atomically increments failed_login_attempts. When the counter reaches 5 the
+-- account is locked for 10 minutes. Returns updated counter and lock time so the
+-- caller can decide whether to send a lock-notification email.
+UPDATE users
+SET failed_login_attempts = failed_login_attempts + 1,
+    account_locked_until  = CASE
+        WHEN failed_login_attempts + 1 >= 5
+        THEN NOW() + INTERVAL '10 minutes'
+        ELSE account_locked_until
+    END
+WHERE id = $1
+RETURNING failed_login_attempts, account_locked_until;
+
+-- name: ResetLoginAttempts :exec
+-- Clears brute-force counters after a successful login or expired lock.
+UPDATE users
+SET failed_login_attempts = 0,
+    account_locked_until  = NULL
+WHERE id = $1;
+
+-- name: ResetLoginAttemptsByEmail :exec
+-- Clears brute-force counters by email address.
+-- Called by ResetPassword so a password reset via email also unlocks the account.
+UPDATE users
+SET failed_login_attempts = 0,
+    account_locked_until  = NULL
+WHERE email = $1;

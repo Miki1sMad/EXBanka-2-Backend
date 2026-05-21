@@ -285,15 +285,23 @@ func (h *BankHandler) ApproveCredit(
 	if installErr != nil {
 		log.Printf("[approve-credit] UPOZORENJE: kredit odobren (id=%d) ali naplata prve rate nije uspela: %v", kredit.ID, installErr)
 	}
-	if insufficientFunds && h.userClient != nil {
-		// Nema dovoljno sredstava — pošalji upozorenje klijentu emailom.
+
+	// Pošalji email o odobrenju kredita i eventualno o upozorenju za ratu.
+	if h.userClient != nil {
 		if email, mailErr := h.userClient.GetClientEmail(ctx, kredit.VlasnikID); mailErr == nil && email != "" {
 			if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
-				Type:  worker.KreditRataUpozorenjeType,
+				Type:  worker.KreditOdobrenType,
 				Email: email,
-				Token: "",
 			}); pubErr != nil {
-				log.Printf("[approve-credit] UPOZORENJE: kredit odobren (id=%d) ali KREDIT_RATA_UPOZORENJE email nije poslat: %v", kredit.ID, pubErr)
+				log.Printf("[approve-credit] UPOZORENJE: kredit odobren (id=%d) ali KREDIT_ODOBREN email nije poslat: %v", kredit.ID, pubErr)
+			}
+			if insufficientFunds {
+				if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
+					Type:  worker.KreditRataUpozorenjeType,
+					Email: email,
+				}); pubErr != nil {
+					log.Printf("[approve-credit] UPOZORENJE: kredit odobren (id=%d) ali KREDIT_RATA_UPOZORENJE email nije poslat: %v", kredit.ID, pubErr)
+				}
 			}
 		}
 	}

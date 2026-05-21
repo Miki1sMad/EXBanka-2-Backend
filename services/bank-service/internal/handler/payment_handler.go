@@ -6,10 +6,12 @@ package handler
 import (
 	"context"
 	"errors"
+	"log"
 	"time"
 
 	pb "banka-backend/proto/banka"
 	"banka-backend/services/bank-service/internal/domain"
+	"banka-backend/services/bank-service/internal/worker"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -238,6 +240,22 @@ func (h *BankHandler) VerifyAndExecutePayment(ctx context.Context, req *pb.Verif
 			return nil, status.Error(codes.FailedPrecondition, "probijen mesečni limit plaćanja")
 		default:
 			return nil, status.Errorf(codes.Internal, "greška pri izvršenju naloga: %v", err)
+		}
+	}
+
+	// Pošalji email notifikaciju o izvršenom plaćanju/prenosu (fire-and-forget).
+	if h.userClient != nil {
+		if email, mailErr := h.userClient.GetMyEmail(ctx); mailErr == nil && email != "" {
+			eventType := worker.PaymentExecutedType
+			if intent.TipTransakcije == "PRENOS" {
+				eventType = worker.TransferExecutedType
+			}
+			if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
+				Type:  eventType,
+				Email: email,
+			}); pubErr != nil {
+				log.Printf("[verify-payment] UPOZORENJE: nalog izvršen (id=%d) ali email nije poslat: %v", intent.ID, pubErr)
+			}
 		}
 	}
 

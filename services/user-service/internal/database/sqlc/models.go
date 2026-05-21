@@ -27,19 +27,21 @@ type Permission struct {
 }
 
 type User struct {
-	ID           int64          `json:"id"`
-	Email        string         `json:"email"`
-	PasswordHash string         `json:"password_hash"`
-	SaltPassword string         `json:"salt_password"`
-	UserType     string         `json:"user_type"`
-	FirstName    string         `json:"first_name"`
-	LastName     string         `json:"last_name"`
-	BirthDate    int64          `json:"birth_date"`
-	Gender       sql.NullString `json:"gender"`
-	PhoneNumber  sql.NullString `json:"phone_number"`
-	Address      sql.NullString `json:"address"`
-	IsActive     bool           `json:"is_active"`
-	CreatedAt    time.Time      `json:"created_at"`
+	ID                  int64          `json:"id"`
+	Email               string         `json:"email"`
+	PasswordHash        string         `json:"password_hash"`
+	SaltPassword        string         `json:"salt_password"`
+	UserType            string         `json:"user_type"`
+	FirstName           string         `json:"first_name"`
+	LastName            string         `json:"last_name"`
+	BirthDate           int64          `json:"birth_date"`
+	Gender              sql.NullString `json:"gender"`
+	PhoneNumber         sql.NullString `json:"phone_number"`
+	Address             sql.NullString `json:"address"`
+	IsActive            bool           `json:"is_active"`
+	CreatedAt           time.Time      `json:"created_at"`
+	FailedLoginAttempts int32          `json:"failed_login_attempts"`
+	AccountLockedUntil  sql.NullTime   `json:"account_locked_until"`
 }
 
 type UserPermission struct {

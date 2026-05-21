@@ -8,4 +8,5 @@ var (
 	ErrEmailTaken         = errors.New("email already in use")
 	ErrInvalidCredentials = errors.New("invalid email or password")
 	ErrClientNotFound     = errors.New("client not found")
+	ErrAccountLocked      = errors.New("account is temporarily locked due to too many failed login attempts")
 )

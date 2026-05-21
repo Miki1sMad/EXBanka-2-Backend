@@ -15,6 +15,10 @@ const (
 	CardCreatedType          = "KREIRANA_KARTICA"
 	KreditPodnetType         = "KREDIT_PODNET"
 	KreditRataUpozorenjeType = "KREDIT_RATA_UPOZORENJE"
+	PaymentExecutedType      = "PAYMENT_EXECUTED"
+	TransferExecutedType     = "TRANSFER_EXECUTED"
+	LimitChangedType         = "LIMIT_CHANGED"
+	KreditOdobrenType        = "KREDIT_ODOBREN"
 )
 
 // AccountEmailEvent je payload za account-related emailove.

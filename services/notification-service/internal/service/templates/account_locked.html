@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nalog privremeno zaključan</title>
+</head>
+<body style="margin:0;padding:0;background-color:#F0F4F8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0">
+    <tr>
+      <td align="center" style="padding:48px 16px;">
+        <table width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,0.08);">
+
+          <!-- Header -->
+          <tr>
+            <td style="background:#1B3A5C;padding:32px 40px;">
+              <h1 style="margin:6px 0 0 0;color:#ffffff;font-size:26px;font-weight:700;letter-spacing:-0.5px;">EXBanka2</h1>
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:40px;">
+              <h2 style="margin:0 0 16px 0;color:#1B3A5C;font-size:22px;font-weight:700;">Nalog privremeno zaključan</h2>
+              <p style="margin:0 0 24px 0;color:#475569;font-size:15px;line-height:1.7;">
+                Detektovano je 5 uzastopnih neuspelih pokušaja prijave na Vaš nalog.
+                Iz bezbednosnih razloga, nalog je privremeno zaključan na <strong>10 minuta</strong>.
+              </p>
+              <p style="margin:0 0 32px 0;color:#475569;font-size:15px;line-height:1.7;">
+                Ako niste Vi pokušali da se prijavite, preporučujemo da odmah resetujete lozinku
+                klikom na dugme ispod.
+              </p>
+
+              <!-- Security Notice -->
+              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-bottom:32px;">
+                <tr>
+                  <td style="background:#FEF2F2;border-left:4px solid #EF4444;border-radius:0 6px 6px 0;padding:14px 18px;">
+                    <p style="margin:0;color:#991B1B;font-size:13px;line-height:1.6;">
+                      <strong>Bezbednosno upozorenje:</strong> Ako ste Vi pokušavali da se prijavite,
+                      možete sačekati 10 minuta i pokušati ponovo. U suprotnom, resetujte lozinku odmah.
+                    </p>
+                  </td>
+                </tr>
+              </table>
+
+              <!-- CTA Button -->
+              <table cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="border-radius:8px;background:#2563EB;">
+                    <a href="{{.FrontendURL}}/reset-password?token={{.Token}}"
+                       style="display:inline-block;padding:14px 32px;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none;border-radius:8px;letter-spacing:0.2px;">
+                      Resetuj lozinku
+                    </a>
+                  </td>
+                </tr>
+              </table>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background:#F8FAFC;border-top:1px solid #E2E8F0;padding:24px 40px;">
+              <p style="margin:0;color:#94A3B8;font-size:12px;line-height:1.6;">
+                &copy; 2025 EXBanka2. Sva prava zadržana.<br>
+                Ovo je automatska poruka. Molimo ne odgovarajte na ovaj email.
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

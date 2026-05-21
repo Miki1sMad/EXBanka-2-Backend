@@ -44,6 +44,21 @@ var kreditPodnetTmpl string
 //go:embed templates/kredit_rata_upozorenje.html
 var kreditRataUpozorenjeTmpl string
 
+//go:embed templates/account_locked.html
+var accountLockedTmpl string
+
+//go:embed templates/payment_executed.html
+var paymentExecutedTmpl string
+
+//go:embed templates/transfer_executed.html
+var transferExecutedTmpl string
+
+//go:embed templates/limit_changed.html
+var limitChangedTmpl string
+
+//go:embed templates/kredit_odobren.html
+var kreditOdobrenTmpl string
+
 // emailTmplEntry holds a pre-parsed template and its email subject line.
 type emailTmplEntry struct {
 	subject string
@@ -79,6 +94,11 @@ func NewEmailService(cfg *config.Config, sender smtp.Sender) *EmailService {
 			"KREIRANA_KARTICA":       {subject: "EXBanka2 \u2014 Nova platna kartica kreirana", tmpl: must("card_created", cardCreatedTmpl)},
 			"KREDIT_PODNET":          {subject: "EXBanka2 \u2014 Zahtev za kredit primljen", tmpl: must("kredit_podnet", kreditPodnetTmpl)},
 			"KREDIT_RATA_UPOZORENJE": {subject: "EXBanka2 \u2014 Upozorenje o naplati rate kredita", tmpl: must("kredit_rata_upozorenje", kreditRataUpozorenjeTmpl)},
+			"ACCOUNT_LOCKED":         {subject: "EXBanka2 \u2014 Nalog privremeno zaklju\u010dan", tmpl: must("account_locked", accountLockedTmpl)},
+			"PAYMENT_EXECUTED":       {subject: "EXBanka2 \u2014 Payment Executed", tmpl: must("payment_executed", paymentExecutedTmpl)},
+			"TRANSFER_EXECUTED":      {subject: "EXBanka2 \u2014 Transfer Executed", tmpl: must("transfer_executed", transferExecutedTmpl)},
+			"LIMIT_CHANGED":          {subject: "EXBanka2 \u2014 Account Limit Updated", tmpl: must("limit_changed", limitChangedTmpl)},
+			"KREDIT_ODOBREN":         {subject: "EXBanka2 \u2014 Kredit odobren", tmpl: must("kredit_odobren", kreditOdobrenTmpl)},
 		},
 	}
 }
