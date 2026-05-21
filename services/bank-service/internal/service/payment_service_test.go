@@ -343,3 +343,33 @@ func TestGetPaymentDetail_Error(t *testing.T) {
 	_, err := svc.GetPaymentDetail(ctx, 1, 2)
 	assert.Error(t, err)
 }
+
+// ─── ExecuteOTCPremiumTransfer ────────────────────────────────────────────────
+
+func TestExecuteOTCPremiumTransfer_Success(t *testing.T) {
+	rr := &mocks.MockPaymentRecipientRepository{}
+	pr := &mocks.MockPaymentRepository{}
+	ctx := context.Background()
+	input := domain.OTCPremiumTransferInput{OfferID: 1, BuyerAccountID: 44, SellerAccountID: 55, AmountInListingCurrency: 100.0, ListingCurrency: "USD", InitiatedByUserID: 1}
+
+	pr.On("ExecuteOTCPremiumTransfer", ctx, nil, input).Return(nil)
+
+	svc := newPaymentService(rr, pr)
+	err := svc.ExecuteOTCPremiumTransfer(ctx, nil, input)
+	require.NoError(t, err)
+	pr.AssertExpectations(t)
+}
+
+func TestExecuteOTCPremiumTransfer_Error(t *testing.T) {
+	rr := &mocks.MockPaymentRecipientRepository{}
+	pr := &mocks.MockPaymentRepository{}
+	ctx := context.Background()
+	input := domain.OTCPremiumTransferInput{OfferID: 2, BuyerAccountID: 44, SellerAccountID: 55, AmountInListingCurrency: 50.0, ListingCurrency: "RSD", InitiatedByUserID: 2}
+
+	pr.On("ExecuteOTCPremiumTransfer", ctx, nil, input).Return(errors.New("transfer failed"))
+
+	svc := newPaymentService(rr, pr)
+	err := svc.ExecuteOTCPremiumTransfer(ctx, nil, input)
+	require.Error(t, err)
+	pr.AssertExpectations(t)
+}

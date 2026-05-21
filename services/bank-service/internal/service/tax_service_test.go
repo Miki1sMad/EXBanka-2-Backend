@@ -770,3 +770,32 @@ func TestListTaxEligibleUsers_EmptyResult(t *testing.T) {
 		t.Errorf("expected empty result, got %d", len(result))
 	}
 }
+
+// ─── CalculateAndCollectForPeriod ─────────────────────────────────────────────
+
+func TestCalculateAndCollectForPeriod_LockError(t *testing.T) {
+	db, dbMock := newGormDB(t)
+	svc := NewTaxService(db, &mockExchangeSvc{}, nil, 0)
+	ctx := context.Background()
+
+	dbMock.ExpectQuery("pg_try_advisory_lock").WillReturnError(errors.New("db error"))
+
+	_, err := svc.CalculateAndCollectForPeriod(ctx, time.Now().Add(-time.Hour), time.Now(), "test")
+	if err == nil {
+		t.Error("expected error when advisory lock query fails")
+	}
+}
+
+func TestCalculateAndCollectForPeriod_LockNotAcquired(t *testing.T) {
+	db, dbMock := newGormDB(t)
+	svc := NewTaxService(db, &mockExchangeSvc{}, nil, 0)
+	ctx := context.Background()
+
+	dbMock.ExpectQuery("pg_try_advisory_lock").
+		WillReturnRows(dbMock.NewRows([]string{"pg_try_advisory_lock"}).AddRow(false))
+
+	_, err := svc.CalculateAndCollectForPeriod(ctx, time.Now().Add(-time.Hour), time.Now(), "test")
+	if !errors.Is(err, ErrPeriodAlreadyRunning) {
+		t.Errorf("expected ErrPeriodAlreadyRunning, got %v", err)
+	}
+}
