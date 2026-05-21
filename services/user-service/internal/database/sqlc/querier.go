@@ -47,6 +47,16 @@ type Querier interface {
 	// Full row including password_hash and salt_password.
 	// ONLY used by the Login handler to verify credentials — never returned to the caller.
 	GetUserByEmail(ctx context.Context, email string) (User, error)
+	// ─── Brute-force protection ───────────────────────────────────────────────────
+	// Atomically increments failed_login_attempts; locks the account for 10 minutes
+	// when the counter reaches 5. Returns the updated row so the caller can decide
+	// whether to send the lock-notification email.
+	RecordFailedLogin(ctx context.Context, id int64) (RecordFailedLoginRow, error)
+	// Clears failed_login_attempts and account_locked_until by user ID.
+	ResetLoginAttempts(ctx context.Context, id int64) error
+	// Clears failed_login_attempts and account_locked_until by email address.
+	// Used by ResetPassword to unlock the account after a successful password reset.
+	ResetLoginAttemptsByEmail(ctx context.Context, email string) error
 	// ─── Profile lookup ───────────────────────────────────────────────────────────
 	// Safe projection — excludes password_hash and salt_password.
 	// Used by GetEmployee, token refresh, and internal service calls.

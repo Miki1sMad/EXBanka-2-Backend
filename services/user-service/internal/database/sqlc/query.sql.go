@@ -299,7 +299,9 @@ SELECT
     phone_number,
     address,
     is_active,
-    created_at
+    created_at,
+    failed_login_attempts,
+    account_locked_until
 FROM users
 WHERE email = $1
 LIMIT 1
@@ -325,8 +327,58 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Address,
 		&i.IsActive,
 		&i.CreatedAt,
+		&i.FailedLoginAttempts,
+		&i.AccountLockedUntil,
 	)
 	return i, err
+}
+
+const recordFailedLogin = `-- name: RecordFailedLogin :one
+UPDATE users
+SET failed_login_attempts = failed_login_attempts + 1,
+    account_locked_until  = CASE
+        WHEN failed_login_attempts + 1 >= 5
+        THEN NOW() + INTERVAL '10 minutes'
+        ELSE account_locked_until
+    END
+WHERE id = $1
+RETURNING failed_login_attempts, account_locked_until
+`
+
+type RecordFailedLoginRow struct {
+	FailedLoginAttempts int32        `json:"failed_login_attempts"`
+	AccountLockedUntil  sql.NullTime `json:"account_locked_until"`
+}
+
+func (q *Queries) RecordFailedLogin(ctx context.Context, id int64) (RecordFailedLoginRow, error) {
+	row := q.db.QueryRowContext(ctx, recordFailedLogin, id)
+	var i RecordFailedLoginRow
+	err := row.Scan(&i.FailedLoginAttempts, &i.AccountLockedUntil)
+	return i, err
+}
+
+const resetLoginAttempts = `-- name: ResetLoginAttempts :exec
+UPDATE users
+SET failed_login_attempts = 0,
+    account_locked_until  = NULL
+WHERE id = $1
+`
+
+func (q *Queries) ResetLoginAttempts(ctx context.Context, id int64) error {
+	_, err := q.db.ExecContext(ctx, resetLoginAttempts, id)
+	return err
+}
+
+const resetLoginAttemptsByEmail = `-- name: ResetLoginAttemptsByEmail :exec
+UPDATE users
+SET failed_login_attempts = 0,
+    account_locked_until  = NULL
+WHERE email = $1
+`
+
+func (q *Queries) ResetLoginAttemptsByEmail(ctx context.Context, email string) error {
+	_, err := q.db.ExecContext(ctx, resetLoginAttemptsByEmail, email)
+	return err
 }
 
 const getUserByID = `-- name: GetUserByID :one

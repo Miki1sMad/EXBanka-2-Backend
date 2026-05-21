@@ -73,6 +73,7 @@ func TestCreateEmployee_Success(t *testing.T) {
 		Email:       "emp@test.com",
 		FirstName:   "Alice",
 		LastName:    "Smith",
+		PhoneNumber: "+381641234567",
 		Permissions: []string{"VIEW_ACCOUNTS"},
 	})
 	require.NoError(t, err)
@@ -98,9 +99,10 @@ func TestCreateEmployee_DuplicateEmail(t *testing.T) {
 	ctx := testutil.AdminContext()
 
 	_, err = h.CreateEmployee(ctx, &pb.CreateEmployeeRequest{
-		Email:     "taken@test.com",
-		FirstName: "Bob",
-		LastName:  "Jones",
+		Email:       "taken@test.com",
+		FirstName:   "Bob",
+		LastName:    "Jones",
+		PhoneNumber: "+381641234567",
 	})
 	assert.Equal(t, codes.AlreadyExists, grpcCode(err))
 	require.NoError(t, smock.ExpectationsWereMet())
@@ -123,9 +125,10 @@ func TestCreateEmployee_CreateUserInternalError(t *testing.T) {
 	ctx := testutil.AdminContext()
 
 	_, err = h.CreateEmployee(ctx, &pb.CreateEmployeeRequest{
-		Email:     "emp@test.com",
-		FirstName: "Bob",
-		LastName:  "Jones",
+		Email:       "emp@test.com",
+		FirstName:   "Bob",
+		LastName:    "Jones",
+		PhoneNumber: "+381641234567",
 	})
 	assert.Equal(t, codes.Internal, grpcCode(err))
 }
@@ -150,10 +153,11 @@ func TestCreateEmployee_EmployeeDetailsError(t *testing.T) {
 	ctx := testutil.AdminContext()
 
 	_, err = h.CreateEmployee(ctx, &pb.CreateEmployeeRequest{
-		Email:     "emp@test.com",
-		FirstName: "Bob",
-		LastName:  "Jones",
-		Username:  "bob.jones",
+		Email:       "emp@test.com",
+		FirstName:   "Bob",
+		LastName:    "Jones",
+		PhoneNumber: "+381641234567",
+		Username:    "bob.jones",
 	})
 	assert.Equal(t, codes.AlreadyExists, grpcCode(err))
 }
@@ -178,9 +182,10 @@ func TestCreateEmployee_CommitError(t *testing.T) {
 	ctx := testutil.AdminContext()
 
 	_, err = h.CreateEmployee(ctx, &pb.CreateEmployeeRequest{
-		Email:     "emp@test.com",
-		FirstName: "Carol",
-		LastName:  "White",
+		Email:       "emp@test.com",
+		FirstName:   "Carol",
+		LastName:    "White",
+		PhoneNumber: "+381641234567",
 	})
 	assert.Equal(t, codes.Internal, grpcCode(err))
 }
@@ -215,6 +220,7 @@ func TestCreateEmployee_AdminType_AssignsSupervisor(t *testing.T) {
 		Email:       "admin2@test.com",
 		FirstName:   "Dan",
 		LastName:    "Brown",
+		PhoneNumber: "+381641234567",
 		UserType:    pb.UserType_USER_TYPE_ADMIN,
 		Permissions: []string{"VIEW_ACCOUNTS"},
 	})
@@ -270,6 +276,7 @@ func TestUpdateEmployee_Success(t *testing.T) {
 		Email:       "new@test.com",
 		FirstName:   "Eve",
 		LastName:    "Davis",
+		PhoneNumber: "+381641234567",
 		Permissions: []string{"VIEW_ACCOUNTS"},
 	})
 	require.NoError(t, err)
@@ -300,10 +307,11 @@ func TestUpdateEmployee_DuplicateEmail(t *testing.T) {
 	h := newTxHandler(q, pub, db)
 
 	_, err = h.UpdateEmployee(ctx, &pb.UpdateEmployeeRequest{
-		Id:        6,
-		Email:     "taken@test.com",
-		FirstName: "X",
-		LastName:  "Y",
+		Id:          6,
+		Email:       "taken@test.com",
+		FirstName:   "X",
+		LastName:    "Y",
+		PhoneNumber: "+381641234567",
 	})
 	assert.Equal(t, codes.AlreadyExists, grpcCode(err))
 }
@@ -334,10 +342,11 @@ func TestUpdateEmployee_CommitError(t *testing.T) {
 	h := newTxHandler(q, pub, db)
 
 	_, err = h.UpdateEmployee(ctx, &pb.UpdateEmployeeRequest{
-		Id:        7,
-		Email:     "u@test.com",
-		FirstName: "G",
-		LastName:  "H",
+		Id:          7,
+		Email:       "u@test.com",
+		FirstName:   "G",
+		LastName:    "H",
+		PhoneNumber: "+381641234567",
 	})
 	assert.Equal(t, codes.Internal, grpcCode(err))
 }

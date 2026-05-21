@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -113,12 +114,16 @@ func (h *UserHandler) CreateEmployee(ctx context.Context, req *pb.CreateEmployee
 	switch {
 	case strings.TrimSpace(req.Email) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "email is required")
+	case !isValidEmail(strings.TrimSpace(req.Email)):
+		return nil, status.Errorf(codes.InvalidArgument, "email format is invalid")
 	case strings.TrimSpace(req.FirstName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "first_name is required")
 	case strings.TrimSpace(req.LastName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "last_name is required")
 	case req.BirthDate > 0 && req.BirthDate > time.Now().UnixMilli():
 		return nil, status.Errorf(codes.InvalidArgument, "birth date cannot be in the future")
+	case strings.TrimSpace(req.PhoneNumber) == "":
+		return nil, status.Errorf(codes.InvalidArgument, "phone number is required")
 	case !isValidPhone(req.PhoneNumber):
 		return nil, status.Errorf(codes.InvalidArgument, "phone number may only contain digits and an optional leading +")
 	}
@@ -300,12 +305,16 @@ func (h *UserHandler) UpdateEmployee(ctx context.Context, req *pb.UpdateEmployee
 		return nil, status.Errorf(codes.InvalidArgument, "id is required")
 	case strings.TrimSpace(req.Email) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "email is required")
+	case !isValidEmail(strings.TrimSpace(req.Email)):
+		return nil, status.Errorf(codes.InvalidArgument, "email format is invalid")
 	case strings.TrimSpace(req.FirstName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "first_name is required")
 	case strings.TrimSpace(req.LastName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "last_name is required")
 	case req.BirthDate > 0 && req.BirthDate > time.Now().UnixMilli():
 		return nil, status.Errorf(codes.InvalidArgument, "birth date cannot be in the future")
+	case strings.TrimSpace(req.PhoneNumber) == "":
+		return nil, status.Errorf(codes.InvalidArgument, "phone number is required")
 	case !isValidPhone(req.PhoneNumber):
 		return nil, status.Errorf(codes.InvalidArgument, "phone number may only contain digits and an optional leading +")
 	}
@@ -681,10 +690,12 @@ func (h *UserHandler) ActivateAccount(ctx context.Context, req *pb.ActivateAccou
 //
 // Flow:
 //  1. Fetch user row by email — NOT_FOUND if email is unknown.
-//  2. Reject inactive accounts — PERMISSION_DENIED.
-//  3. Verify bcrypt password hash — UNAUTHENTICATED on mismatch.
-//  4. Fetch the user's permission codes from user_permissions.
-//  5. Issue access token (15 min) and refresh token (7 days).
+//  2. Reject if account is currently locked — PERMISSION_DENIED.
+//  3. If lock has expired, reset the counter and continue.
+//  4. Reject inactive accounts — PERMISSION_DENIED.
+//  5. Verify bcrypt password hash — on mismatch: increment counter, lock + email on 5th failure.
+//  6. On success: clear the failed-attempt counter.
+//  7. Fetch permissions and issue tokens.
 //
 // Mapped to: POST /login
 func (h *UserHandler) Login(ctx context.Context, req *pb.LoginRequest) (*pb.LoginResponse, error) {
@@ -699,31 +710,63 @@ func (h *UserHandler) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 		return nil, status.Errorf(codes.Internal, "database error during login")
 	}
 
-	// ── 2. Active check ───────────────────────────────────────────────────────
+	// ── 2. Brute-force lock check ─────────────────────────────────────────────
+	if user.AccountLockedUntil.Valid && user.AccountLockedUntil.Time.After(time.Now()) {
+		log.Printf("[login] account locked: user_id=%d locked_until=%v", user.ID, user.AccountLockedUntil.Time)
+		return nil, status.Errorf(codes.ResourceExhausted, "account is temporarily locked due to too many failed login attempts")
+	}
+
+	// ── 3. Expired lock cleanup ───────────────────────────────────────────────
+	// Lock window passed — reset counter so the next failure starts from 1.
+	if user.AccountLockedUntil.Valid {
+		if err := h.querier.ResetLoginAttempts(ctx, user.ID); err != nil {
+			log.Printf("[login] failed to reset expired lock for user_id=%d: %v", user.ID, err)
+		}
+	}
+
+	// ── 4. Active check ───────────────────────────────────────────────────────
 	if !user.IsActive {
 		log.Printf("[login] account inactive: user_id=%d email=%q", user.ID, user.Email)
 		return nil, status.Errorf(codes.PermissionDenied, "account is inactive")
 	}
 
-	// ── 3. Password verification ──────────────────────────────────────────────
-	// Comparing req.Password against user.PasswordHash only — SaltPassword is
-	// NOT appended because bcrypt embeds its own salt inside the hash itself.
+	// ── 5. Password verification ──────────────────────────────────────────────
 	if err := utils.CheckPassword(req.Password, user.PasswordHash); err != nil {
-		log.Printf("[login] bcrypt mismatch: user_id=%d hash_len=%d err=%v",
-			user.ID, len(user.PasswordHash), err)
+		log.Printf("[login] bcrypt mismatch: user_id=%d", user.ID)
+		result, recErr := h.querier.RecordFailedLogin(ctx, user.ID)
+		if recErr != nil {
+			log.Printf("[login] failed to record failed attempt for user_id=%d: %v", user.ID, recErr)
+		} else if result.AccountLockedUntil.Valid {
+			// Account just got locked on this attempt — send email with reset link.
+			token, tokErr := auth.GenerateResetToken(user.Email, h.activationSecret)
+			if tokErr != nil {
+				log.Printf("[login] failed to generate reset token for locked account %s: %v", user.Email, tokErr)
+			} else if pubErr := h.publisher.Publish(utils.EmailEvent{
+				Type:  "ACCOUNT_LOCKED",
+				Email: user.Email,
+				Token: token,
+			}); pubErr != nil {
+				log.Printf("[login] failed to publish account-locked event for %s: %v", user.Email, pubErr)
+			}
+		}
 		return nil, status.Errorf(codes.Unauthenticated, "invalid credentials")
 	}
 
-	// ── 4. Permissions ────────────────────────────────────────────────────────
+	// ── 6. Successful login — clear failed-attempt counter ────────────────────
+	if user.FailedLoginAttempts > 0 {
+		if err := h.querier.ResetLoginAttempts(ctx, user.ID); err != nil {
+			log.Printf("[login] failed to reset login attempts for user_id=%d: %v", user.ID, err)
+		}
+	}
+
+	// ── 7. Permissions ────────────────────────────────────────────────────────
 	perms, err := h.querier.GetUserPermissions(ctx, user.ID)
 	if err != nil {
 		log.Printf("[login] failed to load permissions: user_id=%d err=%v", user.ID, err)
 		return nil, status.Errorf(codes.Internal, "failed to load permissions")
 	}
 
-	// ── 5. Token generation ───────────────────────────────────────────────────
-	// Access token:  { sub, email, user_type, permissions[], iat, exp }
-	// Refresh token: { sub, iat, exp, token_type: "refresh" }
+	// ── 8. Token generation ───────────────────────────────────────────────────
 	userIDStr := strconv.FormatInt(user.ID, 10)
 	accessToken, refreshToken, err := auth.GenerateTokens(
 		userIDStr,
@@ -741,7 +784,7 @@ func (h *UserHandler) Login(ctx context.Context, req *pb.LoginRequest) (*pb.Logi
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    900, // 15 minutes in seconds
+		ExpiresIn:    900,
 	}, nil
 }
 
@@ -1111,6 +1154,8 @@ func (h *UserHandler) CreateClient(ctx context.Context, req *pb.CreateClientRequ
 	switch {
 	case strings.TrimSpace(req.Email) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "email is required")
+	case !isValidEmail(strings.TrimSpace(req.Email)):
+		return nil, status.Errorf(codes.InvalidArgument, "email format is invalid")
 	case strings.TrimSpace(req.FirstName) == "":
 		return nil, status.Errorf(codes.InvalidArgument, "first_name is required")
 	case strings.TrimSpace(req.LastName) == "":
@@ -1281,6 +1326,9 @@ func (h *UserHandler) UpdateClient(ctx context.Context, req *pb.UpdateClientRequ
 	if req.Id == 0 {
 		return nil, status.Errorf(codes.InvalidArgument, "id is required")
 	}
+	if req.Email != "" && !isValidEmail(req.Email) {
+		return nil, status.Errorf(codes.InvalidArgument, "email format is invalid")
+	}
 	if req.PhoneNumber != "" && !isValidPhone(req.PhoneNumber) {
 		return nil, status.Errorf(codes.InvalidArgument, "phone_number must contain only digits and an optional leading +")
 	}
@@ -1402,6 +1450,13 @@ func userTypeToString(t pb.UserType) string {
 	}
 }
 
+var reEmail = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// isValidEmail reports whether s matches a standard email format (local@domain.tld).
+func isValidEmail(s string) bool {
+	return reEmail.MatchString(s)
+}
+
 // isValidPhone reports whether s matches ^\+?[0-9]+$ (digits only, optional
 // leading +). An empty string is also accepted because phone is an optional field.
 func isValidPhone(s string) bool {
@@ -1494,9 +1549,14 @@ func (h *UserHandler) ResetPassword(ctx context.Context, req *pb.ResetPasswordRe
 		return nil, status.Errorf(codes.Internal, "failed to update password")
 	}
 
-	// ── 5. Notify user of the password change ─────────────────────────────────
-	// Fire-and-forget: the password is already committed, so a messaging failure
-	// must not surface as a gRPC error to the caller.
+	// ── 5. Unlock account — clear brute-force counters ────────────────────────
+	// Fire-and-forget: password is already committed; a DB error here must not
+	// fail the request — the user successfully reset their password regardless.
+	if err := h.querier.ResetLoginAttemptsByEmail(ctx, email); err != nil {
+		log.Printf("[reset-password] failed to reset login attempts for %s: %v", email, err)
+	}
+
+	// ── 6. Notify user of the password change ─────────────────────────────────
 	if err := h.publisher.Publish(utils.EmailEvent{
 		Type:  "PASSWORD_RESET_SUCCESS",
 		Email: email,

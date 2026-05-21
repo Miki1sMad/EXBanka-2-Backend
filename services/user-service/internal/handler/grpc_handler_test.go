@@ -134,6 +134,10 @@ func TestLogin(t *testing.T) {
 			name: "wrong password",
 			setup: func(q *mocks.MockQuerier) {
 				q.On("GetUserByEmail", context.Background(), "user@test.com").Return(activeUser, nil)
+				q.On("RecordFailedLogin", context.Background(), int64(1)).Return(sqlc.RecordFailedLoginRow{
+					FailedLoginAttempts: 1,
+					AccountLockedUntil:  sql.NullTime{Valid: false},
+				}, nil)
 			},
 			req:      &pb.LoginRequest{Email: "user@test.com", Password: "WrongPassword!"},
 			wantCode: codes.Unauthenticated,
@@ -738,6 +742,7 @@ func TestResetPassword(t *testing.T) {
 			setup: func(q *mocks.MockQuerier, pub *mocks.MockEmailPublisher) {
 				q.On("UpdateUserPassword", context.Background(),
 					matchUpdatePasswordEmail("reset@test.com")).Return(nil)
+				q.On("ResetLoginAttemptsByEmail", context.Background(), "reset@test.com").Return(nil)
 				pub.On("Publish", utils.EmailEvent{Type: "PASSWORD_RESET_SUCCESS", Email: "reset@test.com", Token: ""}).
 					Return(nil)
 			},

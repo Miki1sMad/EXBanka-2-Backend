@@ -374,6 +374,70 @@ func (_m *MockQuerier) MarkVerificationTokenUsed(ctx context.Context, id int64) 
 	return r0
 }
 
+// RecordFailedLogin provides a mock function with given fields: ctx, id
+func (_m *MockQuerier) RecordFailedLogin(ctx context.Context, id int64) (sqlc.RecordFailedLoginRow, error) {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RecordFailedLogin")
+	}
+
+	var r0 sqlc.RecordFailedLoginRow
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64) (sqlc.RecordFailedLoginRow, error)); ok {
+		return rf(ctx, id)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64) sqlc.RecordFailedLoginRow); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Get(0).(sqlc.RecordFailedLoginRow)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int64) error); ok {
+		r1 = rf(ctx, id)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// ResetLoginAttempts provides a mock function with given fields: ctx, id
+func (_m *MockQuerier) ResetLoginAttempts(ctx context.Context, id int64) error {
+	ret := _m.Called(ctx, id)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResetLoginAttempts")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64) error); ok {
+		r0 = rf(ctx, id)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// ResetLoginAttemptsByEmail provides a mock function with given fields: ctx, email
+func (_m *MockQuerier) ResetLoginAttemptsByEmail(ctx context.Context, email string) error {
+	ret := _m.Called(ctx, email)
+
+	if len(ret) == 0 {
+		panic("no return value specified for ResetLoginAttemptsByEmail")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) error); ok {
+		r0 = rf(ctx, email)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
 // SearchClients provides a mock function with given fields: ctx, arg
 func (_m *MockQuerier) SearchClients(ctx context.Context, arg sqlc.SearchClientsParams) ([]sqlc.SearchClientsRow, error) {
 	ret := _m.Called(ctx, arg)

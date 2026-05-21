@@ -558,6 +558,18 @@ func (h *BankHandler) VerifyLimitChange(ctx context.Context, req *pb.VerifyLimit
 		}
 	}
 
+	// Pošalji email notifikaciju o promenji limita (fire-and-forget).
+	if h.userClient != nil {
+		if email, mailErr := h.userClient.GetMyEmail(ctx); mailErr == nil && email != "" {
+			if pubErr := h.accountPublisher.Publish(worker.AccountEmailEvent{
+				Type:  worker.LimitChangedType,
+				Email: email,
+			}); pubErr != nil {
+				log.Printf("[verify-limit] UPOZORENJE: limit promenjen ali email nije poslat: %v", pubErr)
+			}
+		}
+	}
+
 	return &emptypb.Empty{}, nil
 }
 
