@@ -33,6 +33,7 @@ Thumbs.db
 
 rabbitmq_data/
 
+coverage
 coverage.out
 coverage_filtered.out
 coverage_report.html
