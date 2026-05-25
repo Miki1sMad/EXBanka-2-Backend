@@ -52,6 +52,8 @@ type BankHandler struct {
 	tradingService   trading.TradingService
 	userClient       clientEmailLookup
 	accountPublisher worker.AccountEmailPublisher
+	orderNotifier    worker.OrderNotifier
+	auditLogger      *SystemAuditLogger
 }
 
 func NewBankHandler(
@@ -67,6 +69,8 @@ func NewBankHandler(
 	tradingService trading.TradingService,
 	userClient clientEmailLookup,
 	accountPublisher worker.AccountEmailPublisher,
+	orderNotifier worker.OrderNotifier,
+	auditLogger *SystemAuditLogger,
 ) *BankHandler {
 	return &BankHandler{
 		currencyService:  currencyService,
@@ -81,6 +85,8 @@ func NewBankHandler(
 		tradingService:   tradingService,
 		userClient:       userClient,
 		accountPublisher: accountPublisher,
+		orderNotifier:    orderNotifier,
+		auditLogger:      auditLogger,
 	}
 }
 

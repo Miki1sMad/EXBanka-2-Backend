@@ -101,6 +101,19 @@ func (s *otcService) CreateOffer(ctx context.Context, in domain.CreateOTCOfferIn
 			return err
 		}
 		created = out
+		amount32 := in.Amount
+		px := in.PricePerStock
+		pm := in.Premium
+		sd := in.SettlementDate
+		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+			OfferID:        created.ID,
+			Action:         "CREATED",
+			ChangedBy:      in.BuyerID,
+			Amount:         &amount32,
+			PricePerStock:  &px,
+			Premium:        &pm,
+			SettlementDate: &sd,
+		})
 		return nil
 	})
 	if txErr != nil {
@@ -159,6 +172,11 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 			return domain.ErrOTCInsufficientCapacity
 		}
 
+		oldAmount := offer.Amount
+		oldPx := offer.PricePerStock
+		oldPm := offer.Premium
+		oldSd := offer.SettlementDate
+
 		offer.Amount = in.Amount
 		offer.PricePerStock = in.PricePerStock
 		offer.Premium = in.Premium
@@ -171,7 +189,27 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 		}
 		// Ponovo pročitaj iz baze da bi vratili svežu LastModified vrednost.
 		updated, err = repo.GetOfferByID(ctx, offer.ID)
-		return err
+		if err != nil {
+			return err
+		}
+		newAmount := in.Amount
+		newPx := in.PricePerStock
+		newPm := in.Premium
+		newSd := in.SettlementDate
+		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+			OfferID:           offer.ID,
+			Action:            "COUNTER",
+			ChangedBy:         in.CallerID,
+			Amount:            &newAmount,
+			PricePerStock:     &newPx,
+			Premium:           &newPm,
+			SettlementDate:    &newSd,
+			OldAmount:         &oldAmount,
+			OldPricePerStock:  &oldPx,
+			OldPremium:        &oldPm,
+			OldSettlementDate: &oldSd,
+		})
+		return nil
 	})
 	if txErr != nil {
 		return nil, txErr
@@ -270,6 +308,13 @@ func (s *otcService) AcceptOffer(ctx context.Context, in domain.AcceptOTCOfferIn
 			return err
 		}
 		contract = out
+		acceptedStr := string(domain.OTCOfferAccepted)
+		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+			OfferID:   offer.ID,
+			Action:    "ACCEPTED",
+			ChangedBy: in.CallerID,
+			NewStatus: &acceptedStr,
+		})
 
 		// 3) Transfer premije kroz PaymentService (audit + FX) — UNUTAR iste tx.
 		if err := s.paymentSvc.ExecuteOTCPremiumTransfer(ctx, tx, domain.OTCPremiumTransferInput{
@@ -321,6 +366,13 @@ func (s *otcService) DeclineOffer(ctx context.Context, offerID, callerID int64) 
 		if err := repo.UpdateOfferStatus(ctx, offer.ID, newStatus, callerID); err != nil {
 			return err
 		}
+		newStatusStr := string(newStatus)
+		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+			OfferID:   offer.ID,
+			Action:    "DECLINED",
+			ChangedBy: callerID,
+			NewStatus: &newStatusStr,
+		})
 		offer.Status = newStatus
 		offer.ModifiedBy = callerID
 		updated = offer
@@ -345,4 +397,9 @@ func (s *otcService) GetOffer(ctx context.Context, offerID, callerID int64) (*do
 // ListMarketplace — klijentske akcije u javnom režimu za OTC kupovinu.
 func (s *otcService) ListMarketplace(ctx context.Context, callerID int64) ([]domain.OTCMarketplaceItem, error) {
 	return s.repo.ListMarketplace(ctx, callerID)
+}
+
+func (s *otcService) ListCompletedNegotiations(ctx context.Context, callerID int64, filter domain.ListCompletedOffersFilter) ([]domain.NegotiationHistoryItem, error) {
+	filter.UserID = callerID
+	return s.repo.ListCompletedNegotiations(ctx, filter)
 }

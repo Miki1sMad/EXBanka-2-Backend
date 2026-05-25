@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="sr">
+<head><meta charset="UTF-8"><title>OTC Ponuda odbijena</title></head>
+<body style="font-family:Arial,sans-serif;background:#f5f5f5;padding:20px">
+<div style="max-width:600px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+  <h2 style="color:#8a1a1a">EXBanka2 — OTC ponuda odbijena</h2>
+  <p>Vaša OTC ponuda je odbijena ili povučena od strane druge strane.</p>
+  <table style="width:100%;border-collapse:collapse;margin:16px 0">
+    <tr><td style="padding:8px;color:#666">ID ponude:</td><td style="padding:8px;font-weight:bold">#{{index .Data "offer_id"}}</td></tr>
+    <tr style="background:#f9f9f9"><td style="padding:8px;color:#666">Hartija (ID):</td><td style="padding:8px">{{index .Data "listing_id"}}</td></tr>
+    <tr><td style="padding:8px;color:#666">Status:</td><td style="padding:8px">{{index .Data "status"}}</td></tr>
+  </table>
+  <p>Možete pokrenuti novu ponudu ako želite nastaviti pregovor.</p>
+  <p><a href="{{.FrontendURL}}" style="background:#8a1a1a;color:#fff;padding:10px 20px;border-radius:4px;text-decoration:none">Idi na platformu</a></p>
+  <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+  <p style="color:#999;font-size:12px">EXBanka2 — <a href="{{.FrontendURL}}">{{.FrontendURL}}</a></p>
+</div>
+</body>
+</html>

@@ -462,6 +462,16 @@ func (h *UserHandler) UpdateEmployee(ctx context.Context, req *pb.UpdateEmployee
 				return nil, status.Errorf(codes.Internal, "failed to provision actuary record in bank-service: %v", err)
 			}
 		}
+
+		// Fire-and-forget permission change audit log.
+		callerID, parseErr := strconv.ParseInt(claims.Subject, 10, 64)
+		if parseErr == nil {
+			go func() {
+				if logErr := h.bankClient.LogPermissionChange(ctx, callerID, req.Id, oldPerms, req.Permissions, bearerToken); logErr != nil {
+					log.Printf("[UpdateEmployee] audit log permission change employee_id=%d: %v", req.Id, logErr)
+				}
+			}()
+		}
 	}
 
 	// ── 10. Commit ────────────────────────────────────────────────────────────

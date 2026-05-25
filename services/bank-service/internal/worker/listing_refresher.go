@@ -26,6 +26,22 @@ type PriceTickPublisher interface {
 	Publish(listingID int64, ask, bid float64)
 }
 
+// CompositePriceTickPublisher forwards each price tick to multiple publishers.
+type CompositePriceTickPublisher struct {
+	publishers []PriceTickPublisher
+}
+
+// NewCompositePriceTickPublisher creates a publisher that broadcasts to all given publishers.
+func NewCompositePriceTickPublisher(publishers ...PriceTickPublisher) *CompositePriceTickPublisher {
+	return &CompositePriceTickPublisher{publishers: publishers}
+}
+
+func (c *CompositePriceTickPublisher) Publish(listingID int64, ask, bid float64) {
+	for _, p := range c.publishers {
+		p.Publish(listingID, ask, bid)
+	}
+}
+
 // ListingRefresherWorker periodično osvežava cene hartija od vrednosti.
 //
 // Podržani tipovi i hijerarhija izvora:

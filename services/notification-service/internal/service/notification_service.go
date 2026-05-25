@@ -59,6 +59,39 @@ var limitChangedTmpl string
 //go:embed templates/kredit_odobren.html
 var kreditOdobrenTmpl string
 
+//go:embed templates/order_pending.html
+var orderPendingTmpl string
+
+//go:embed templates/order_approved.html
+var orderApprovedTmpl string
+
+//go:embed templates/order_declined.html
+var orderDeclinedTmpl string
+
+//go:embed templates/order_executed.html
+var orderExecutedTmpl string
+
+//go:embed templates/order_canceled.html
+var orderCanceledTmpl string
+
+//go:embed templates/price_alert.html
+var priceAlertTmpl string
+
+//go:embed templates/recurring_order_skipped.html
+var recurringOrderSkippedTmpl string
+
+//go:embed templates/otc_counter_offer.html
+var otcCounterOfferTmpl string
+
+//go:embed templates/otc_offer_accepted.html
+var otcOfferAcceptedTmpl string
+
+//go:embed templates/otc_offer_declined.html
+var otcOfferDeclinedTmpl string
+
+//go:embed templates/otc_contract_expiring.html
+var otcContractExpiringTmpl string
+
 // emailTmplEntry holds a pre-parsed template and its email subject line.
 type emailTmplEntry struct {
 	subject string
@@ -98,7 +131,18 @@ func NewEmailService(cfg *config.Config, sender smtp.Sender) *EmailService {
 			"PAYMENT_EXECUTED":       {subject: "EXBanka2 \u2014 Payment Executed", tmpl: must("payment_executed", paymentExecutedTmpl)},
 			"TRANSFER_EXECUTED":      {subject: "EXBanka2 \u2014 Transfer Executed", tmpl: must("transfer_executed", transferExecutedTmpl)},
 			"LIMIT_CHANGED":          {subject: "EXBanka2 \u2014 Account Limit Updated", tmpl: must("limit_changed", limitChangedTmpl)},
-			"KREDIT_ODOBREN":         {subject: "EXBanka2 \u2014 Kredit odobren", tmpl: must("kredit_odobren", kreditOdobrenTmpl)},
+			"KREDIT_ODOBREN":   {subject: "EXBanka2 \u2014 Kredit odobren", tmpl: must("kredit_odobren", kreditOdobrenTmpl)},
+			"ORDER_PENDING":    {subject: "EXBanka2 \u2014 Nalog \u010deka odobrenje", tmpl: must("order_pending", orderPendingTmpl)},
+			"ORDER_APPROVED":   {subject: "EXBanka2 \u2014 Nalog odobren", tmpl: must("order_approved", orderApprovedTmpl)},
+			"ORDER_DECLINED":   {subject: "EXBanka2 \u2014 Nalog odbijen", tmpl: must("order_declined", orderDeclinedTmpl)},
+			"ORDER_EXECUTED":   {subject: "EXBanka2 \u2014 Nalog izvr\u0161en", tmpl: must("order_executed", orderExecutedTmpl)},
+			"ORDER_CANCELED":   {subject: "EXBanka2 \u2014 Nalog otkazan", tmpl: must("order_canceled", orderCanceledTmpl)},
+			"PRICE_ALERT":               {subject: "EXBanka2 \u2014 Price Alert aktiviran", tmpl: must("price_alert", priceAlertTmpl)},
+			"RECURRING_ORDER_SKIPPED":   {subject: "EXBanka2 \u2014 Trajni nalog presko\u010den", tmpl: must("recurring_order_skipped", recurringOrderSkippedTmpl)},
+			"OTC_COUNTER_OFFER":         {subject: "EXBanka2 \u2014 OTC kontraponuda primljena", tmpl: must("otc_counter_offer", otcCounterOfferTmpl)},
+			"OTC_OFFER_ACCEPTED":        {subject: "EXBanka2 \u2014 OTC ponuda prihva\u0107ena", tmpl: must("otc_offer_accepted", otcOfferAcceptedTmpl)},
+			"OTC_OFFER_DECLINED":        {subject: "EXBanka2 \u2014 OTC ponuda odbijena", tmpl: must("otc_offer_declined", otcOfferDeclinedTmpl)},
+			"OTC_CONTRACT_EXPIRING":     {subject: "EXBanka2 \u2014 OTC ugovor uskoro isti\u010de", tmpl: must("otc_contract_expiring", otcContractExpiringTmpl)},
 		},
 	}
 }
@@ -121,9 +165,11 @@ func (s *EmailService) SendEmail(event domain.EmailEvent) error {
 	if err := entry.tmpl.Execute(&body, struct {
 		FrontendURL string
 		Token       string
+		Data        map[string]string
 	}{
 		FrontendURL: s.cfg.FrontendURL,
 		Token:       event.Token,
+		Data:        event.Data,
 	}); err != nil {
 		return fmt.Errorf("template execute: %w", err)
 	}

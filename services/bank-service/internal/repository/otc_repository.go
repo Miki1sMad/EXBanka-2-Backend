@@ -101,6 +101,25 @@ func (m otcContractModel) toDomain() domain.OTCContract {
 	}
 }
 
+type otcOfferHistoryModel struct {
+	ID                int64      `gorm:"column:id;primaryKey"`
+	OfferID           int64      `gorm:"column:offer_id"`
+	Action            string     `gorm:"column:action"`
+	ChangedBy         int64      `gorm:"column:changed_by"`
+	Amount            *int32     `gorm:"column:amount"`
+	PricePerStock     *float64   `gorm:"column:price_per_stock"`
+	Premium           *float64   `gorm:"column:premium"`
+	SettlementDate    *time.Time `gorm:"column:settlement_date"`
+	OldAmount         *int32     `gorm:"column:old_amount"`
+	OldPricePerStock  *float64   `gorm:"column:old_price_per_stock"`
+	OldPremium        *float64   `gorm:"column:old_premium"`
+	OldSettlementDate *time.Time `gorm:"column:old_settlement_date"`
+	NewStatus         *string    `gorm:"column:new_status"`
+	CreatedAt         time.Time  `gorm:"column:created_at"`
+}
+
+func (otcOfferHistoryModel) TableName() string { return "core_banking.otc_offer_history" }
+
 // ─── Repository ───────────────────────────────────────────────────────────────
 
 type otcRepository struct {
@@ -621,6 +640,146 @@ func (r *otcRepository) ExpireOverdueContracts(ctx context.Context) (int, error)
 		return 0, fmt.Errorf("expire overdue contracts: %w", res.Error)
 	}
 	return int(res.RowsAffected), nil
+}
+
+// ListContractsExpiringSoon vraća VALID ugovore čiji settlement_date pada
+// tačno withinDays kalendarskih dana od danas (JOINuje listing za ticker).
+func (r *otcRepository) ListContractsExpiringSoon(ctx context.Context, withinDays int) ([]domain.OTCContractExpiringSoon, error) {
+	type row struct {
+		otcContractModel
+		Ticker string `gorm:"column:ticker"`
+	}
+	var rows []row
+	err := r.db.WithContext(ctx).Raw(`
+		SELECT c.*, l.ticker
+		FROM core_banking.otc_contracts c
+		JOIN core_banking.listing l ON l.id = c.listing_id
+		WHERE c.status = 'VALID'
+		  AND c.settlement_date::date = (CURRENT_DATE + ($1 * INTERVAL '1 day'))::date
+	`, withinDays).Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list contracts expiring soon: %w", err)
+	}
+	out := make([]domain.OTCContractExpiringSoon, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, domain.OTCContractExpiringSoon{
+			OTCContract: row.otcContractModel.toDomain(),
+			Ticker:      row.Ticker,
+		})
+	}
+	return out, nil
+}
+
+func (r *otcRepository) RecordOfferHistory(ctx context.Context, entry domain.OTCOfferHistoryEntry) error {
+	m := otcOfferHistoryModel{
+		OfferID:           entry.OfferID,
+		Action:            entry.Action,
+		ChangedBy:         entry.ChangedBy,
+		Amount:            entry.Amount,
+		PricePerStock:     entry.PricePerStock,
+		Premium:           entry.Premium,
+		SettlementDate:    entry.SettlementDate,
+		OldAmount:         entry.OldAmount,
+		OldPricePerStock:  entry.OldPricePerStock,
+		OldPremium:        entry.OldPremium,
+		OldSettlementDate: entry.OldSettlementDate,
+		NewStatus:         entry.NewStatus,
+	}
+	return r.db.WithContext(ctx).Create(&m).Error
+}
+
+func (r *otcRepository) ListCompletedNegotiations(ctx context.Context, filter domain.ListCompletedOffersFilter) ([]domain.NegotiationHistoryItem, error) {
+	// Query 1: completed offers for user (with ticker via JOIN)
+	type offerRow struct {
+		otcOfferModel
+		Ticker    string `gorm:"column:ticker"`
+		StockName string `gorm:"column:stock_name"`
+		Exchange  string `gorm:"column:exchange_name"`
+	}
+	q := r.db.WithContext(ctx).Table("core_banking.otc_offers o").
+		Select("o.*, l.ticker, l.name as stock_name, e.acronym as exchange_name").
+		Joins("LEFT JOIN core_banking.listing l ON l.id = o.listing_id").
+		Joins("LEFT JOIN core_banking.exchange e ON e.id = l.exchange_id").
+		Where("o.status != 'PENDING'").
+		Where("(o.buyer_id = ? OR o.seller_id = ?)", filter.UserID, filter.UserID).
+		Order("o.last_modified DESC")
+
+	if filter.Status != nil {
+		q = q.Where("o.status = ?", string(*filter.Status))
+	}
+	if filter.From != nil {
+		q = q.Where("o.last_modified >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		q = q.Where("o.last_modified <= ?", *filter.To)
+	}
+	if filter.CounterpartID != nil {
+		q = q.Where("(o.buyer_id = ? OR o.seller_id = ?)", *filter.CounterpartID, *filter.CounterpartID)
+	}
+
+	var rows []offerRow
+	if err := q.Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list completed negotiations: %w", err)
+	}
+	if len(rows) == 0 {
+		return []domain.NegotiationHistoryItem{}, nil
+	}
+
+	// Collect offer IDs
+	offerIDs := make([]int64, len(rows))
+	for i, row := range rows {
+		offerIDs[i] = row.ID
+	}
+
+	// Query 2: all history entries for those offers
+	var histRows []otcOfferHistoryModel
+	if err := r.db.WithContext(ctx).
+		Where("offer_id IN ?", offerIDs).
+		Order("offer_id, created_at").
+		Find(&histRows).Error; err != nil {
+		return nil, fmt.Errorf("list offer history: %w", err)
+	}
+
+	// Index history by offer_id
+	histByOffer := make(map[int64][]domain.OTCOfferHistoryEntry)
+	for _, h := range histRows {
+		entry := domain.OTCOfferHistoryEntry{
+			ID:                h.ID,
+			OfferID:           h.OfferID,
+			Action:            h.Action,
+			ChangedBy:         h.ChangedBy,
+			Amount:            h.Amount,
+			PricePerStock:     h.PricePerStock,
+			Premium:           h.Premium,
+			SettlementDate:    h.SettlementDate,
+			OldAmount:         h.OldAmount,
+			OldPricePerStock:  h.OldPricePerStock,
+			OldPremium:        h.OldPremium,
+			OldSettlementDate: h.OldSettlementDate,
+			NewStatus:         h.NewStatus,
+			CreatedAt:         h.CreatedAt,
+		}
+		histByOffer[h.OfferID] = append(histByOffer[h.OfferID], entry)
+	}
+
+	// Assemble results
+	out := make([]domain.NegotiationHistoryItem, 0, len(rows))
+	for _, row := range rows {
+		item := domain.NegotiationHistoryItem{
+			OTCOfferListItem: domain.OTCOfferListItem{
+				OTCOffer:  row.otcOfferModel.toDomain(),
+				Ticker:    row.Ticker,
+				StockName: row.StockName,
+				Exchange:  row.Exchange,
+			},
+			History: histByOffer[row.ID],
+		}
+		if item.History == nil {
+			item.History = []domain.OTCOfferHistoryEntry{}
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
 
 // Napomena: transfer premije je preseljen u PaymentService

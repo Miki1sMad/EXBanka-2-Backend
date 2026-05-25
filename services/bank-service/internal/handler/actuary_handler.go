@@ -18,11 +18,12 @@ import (
 // ActuaryHandler implementira pb.ActuaryServiceServer.
 type ActuaryHandler struct {
 	pb.UnimplementedActuaryServiceServer
-	service domain.ActuaryService
+	service     domain.ActuaryService
+	auditLogger *SystemAuditLogger
 }
 
-func NewActuaryHandler(service domain.ActuaryService) *ActuaryHandler {
-	return &ActuaryHandler{service: service}
+func NewActuaryHandler(service domain.ActuaryService, auditLogger *SystemAuditLogger) *ActuaryHandler {
+	return &ActuaryHandler{service: service, auditLogger: auditLogger}
 }
 
 // ─── Mapiranje domain → proto ─────────────────────────────────────────────────
@@ -179,6 +180,12 @@ func (h *ActuaryHandler) SetAgentLimit(ctx context.Context, req *pb.SetAgentLimi
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "greška pri postavljanju limita: %v", err)
 	}
+	if h.auditLogger != nil {
+		h.auditLogger.Log(domain.AuditAgentLimitSet, ptr64(actorID), ptr64(req.EmployeeId), map[string]interface{}{
+			"agent_id":  req.EmployeeId,
+			"new_limit": req.Limit,
+		})
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -194,6 +201,12 @@ func (h *ActuaryHandler) ResetAgentUsedLimit(ctx context.Context, req *pb.ResetA
 	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "greška pri resetovanju limita: %v", err)
+	}
+	if h.auditLogger != nil {
+		actorForReset, _ := extractActuaryEmployeeID(ctx)
+		h.auditLogger.Log(domain.AuditAgentLimitReset, ptr64(actorForReset), ptr64(req.EmployeeId), map[string]interface{}{
+			"agent_id": req.EmployeeId,
+		})
 	}
 	return &emptypb.Empty{}, nil
 }

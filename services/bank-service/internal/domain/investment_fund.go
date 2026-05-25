@@ -82,8 +82,9 @@ type FundFilter struct {
 // FundValueRSD i Profit su izvedeni podaci izračunati u servisu.
 type FundListItem struct {
 	InvestmentFund
-	FundValueRSD float64 // LikvidnaSredstva + tržišna vrednost svih hartija u RSD
-	Profit       float64 // FundValueRSD − zbir svih uloženih iznosa iz pozicija
+	FundValueRSD float64    // LikvidnaSredstva + tržišna vrednost svih hartija u RSD
+	Profit       float64    // FundValueRSD − zbir svih uloženih iznosa iz pozicija
+	Stats        *FundStats // nil if fewer than MinSnapshotsForStats snapshots exist
 }
 
 // FundSecurityDetail je hartija sa tržišnim podacima za prikaz u detalju fonda.
@@ -114,6 +115,40 @@ type FundDetails struct {
 	FundValueRSD float64
 	Profit       float64
 	Securities   []FundSecurityDetail
+}
+
+// MinSnapshotsForStats is the minimum number of historical daily snapshots that must
+// exist before performance statistics (return, volatility, drawdown, RTV) are computed
+// and exposed. Below this threshold stats are returned as nil.
+const MinSnapshotsForStats = 3
+
+// FundSnapshot is one daily entry from fund_performance_snapshots.
+type FundSnapshot struct {
+	SnapshotDate time.Time
+	FundValueRSD float64
+}
+
+// FundPerformancePoint is one data point in a performance time series.
+type FundPerformancePoint struct {
+	Period string
+	Value  float64
+}
+
+// FundStats contains derived performance metrics computed from historical snapshots.
+// All percentage values are expressed as fractions (e.g. 0.12 = 12 %).
+type FundStats struct {
+	AnnualizedReturn    float64 // CAGR from first to last snapshot
+	Volatility          float64 // annualised std-dev of monthly returns
+	MaxDrawdown         float64 // max peak-to-trough decline (positive fraction)
+	RewardToVariability float64 // AnnualizedReturn / Volatility (higher is better)
+	SnapshotCount       int     // number of snapshots used in the calculation
+}
+
+// FundHolding is a fund's position in a specific listing (used by dividend worker).
+type FundHolding struct {
+	FundID    int64
+	AccountID int64
+	Quantity  float64
 }
 
 // ─── Repository interfejs ─────────────────────────────────────────────────────
@@ -164,6 +199,21 @@ type InvestmentFundRepository interface {
 
 	// GetTotalInvested vraća zbir svih uloženih iznosa u fond (suma invested_rsd svih pozicija).
 	GetTotalInvested(ctx context.Context, fundID int64) (float64, error)
+
+	// AddLiquidAssets increases liquid_assets of the fund by amountRSD.
+	// Called when the fund receives dividend income.
+	AddLiquidAssets(ctx context.Context, fundID int64, amountRSD float64) error
+
+	// ListFundsByListingID returns all funds that currently hold shares of the given listing.
+	ListFundsByListingID(ctx context.Context, listingID int64) ([]FundHolding, error)
+
+	// GetSnapshots returns all daily snapshots for a fund ordered by date ascending.
+	// Used for computing performance statistics.
+	GetSnapshots(ctx context.Context, fundID int64) ([]FundSnapshot, error)
+
+	// GetAveragePerformance returns average fund_value_rsd across all funds
+	// grouped by period ("monthly" | "quarterly" | "yearly").
+	GetAveragePerformance(ctx context.Context, period string) ([]FundPerformancePoint, error)
 
 	// WithDB vraća novu instancu koja koristi dati *gorm.DB (može biti transakcija).
 	// Argument mora biti *gorm.DB; neophodan za atomično izvršavanje fill operacija u engine.go.

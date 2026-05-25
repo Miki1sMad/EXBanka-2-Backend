@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"banka-backend/services/bank-service/internal/domain"
 	"banka-backend/services/bank-service/internal/service"
 	auth "banka-backend/shared/auth"
 
@@ -39,16 +40,18 @@ func withBearer(ctx context.Context, r *http.Request) context.Context {
 
 // TaxHandler serves all /bank/tax/* endpoints.
 type TaxHandler struct {
-	taxService *service.TaxService
-	jwtSecret  string
+	taxService  *service.TaxService
+	jwtSecret   string
+	auditLogger *SystemAuditLogger
 }
 
 // NewTaxHandler constructs the handler. Sva stanja (DB, exchange, userClient,
 // stateRevenueAccountID) drži TaxService; handler vidi samo njegov interfejs.
-func NewTaxHandler(taxService *service.TaxService, jwtSecret string) *TaxHandler {
+func NewTaxHandler(taxService *service.TaxService, jwtSecret string, auditLogger *SystemAuditLogger) *TaxHandler {
 	return &TaxHandler{
-		taxService: taxService,
-		jwtSecret:  jwtSecret,
+		taxService:  taxService,
+		jwtSecret:   jwtSecret,
+		auditLogger: auditLogger,
 	}
 }
 
@@ -134,7 +137,7 @@ type taxCalculateResponse struct {
 	Message           string  `json:"message"`
 }
 
-func (h *TaxHandler) calculateAndCollect(w http.ResponseWriter, r *http.Request, _ *auth.AccessClaims) {
+func (h *TaxHandler) calculateAndCollect(w http.ResponseWriter, r *http.Request, claims *auth.AccessClaims) {
 	ctx := r.Context()
 	now := time.Now()
 
@@ -178,6 +181,17 @@ func (h *TaxHandler) calculateAndCollect(w http.ResponseWriter, r *http.Request,
 	msg := "Obračun poreza je uspešno izvršen."
 	if summary.ProcessedUsers == 0 {
 		msg = "Nema oporezivih profita za izabrani period."
+	}
+
+	if h.auditLogger != nil && claims != nil {
+		var actorPtr *int64
+		if id, err := strconv.ParseInt(claims.Subject, 10, 64); err == nil {
+			actorPtr = ptr64(id)
+		}
+		h.auditLogger.Log(domain.AuditTaxCalculated, actorPtr, nil, map[string]interface{}{
+			"period_start": summary.PeriodStart.UTC().Format(time.RFC3339),
+			"period_end":   summary.PeriodEnd.UTC().Format(time.RFC3339),
+		})
 	}
 
 	writeJSON(w, http.StatusOK, taxCalculateResponse{

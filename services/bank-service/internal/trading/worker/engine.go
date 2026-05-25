@@ -104,6 +104,17 @@ type MarketSnapshot struct {
 	// Npr. za EUR/USD: BaseCurrency="EUR", QuoteCurrency="USD".
 	ForexBaseCurrency  string
 	ForexQuoteCurrency string
+
+	// Ticker je simbol hartije (npr. "AAPL"), populisan za email notifikacije.
+	Ticker string
+}
+
+// OrderFillNotifier is an optional hook called by the engine after each fill
+// and after an auto-cancel due to insufficient funds.
+// Implementations must be non-blocking or handle their own goroutines.
+type OrderFillNotifier interface {
+	NotifyOrderExecuted(order trading.Order, ticker string, filledQty int32, executedPrice decimal.Decimal)
+	NotifyOrderCanceled(order trading.Order, ticker string)
 }
 
 // ExchangeChecker proverava da li je berza otvorena u trenutku izvršenja.
@@ -173,6 +184,10 @@ type Engine struct {
 	// unutar svake goroutine i omogućavajući event-driven LIMIT okidanje.
 	// Može biti nil; u tom slučaju waitForLimitActivation pada nazad na originalni polling.
 	tickBus *PriceTickBus
+
+	// fillNotifier, ako je postavljen, prima obaveštenja o izvršenim fillovima i auto-cancelima.
+	// Može biti nil.
+	fillNotifier OrderFillNotifier
 }
 
 // NewEngine constructs an Engine with its dependencies.
@@ -194,6 +209,7 @@ func NewEngine(
 	pollInterval time.Duration,
 	fundRepo domain.InvestmentFundRepository,
 	tickBus *PriceTickBus,
+	fillNotifier OrderFillNotifier,
 ) *Engine {
 	if pollInterval <= 0 {
 		pollInterval = defaultPollInterval
@@ -207,6 +223,7 @@ func NewEngine(
 		db:           db,
 		pollInterval: pollInterval,
 		tickBus:      tickBus,
+		fillNotifier: fillNotifier,
 	}
 }
 
@@ -777,6 +794,11 @@ func (e *Engine) executeOrder(ctx context.Context, order *trading.Order, effecti
 				if relErr := e.funds.ReleaseFunds(ctx, current.AccountID, releaseAmt); relErr != nil {
 					log.Printf("[trading/engine] order %d: greška pri oslobađanju rezervacije: %v", current.ID, relErr)
 				}
+				if e.fillNotifier != nil {
+					filledOrder := *current
+					filledOrder.RemainingPortions = 0
+					go e.fillNotifier.NotifyOrderCanceled(filledOrder, snapshot.Ticker)
+				}
 				return nil
 			}
 			return err
@@ -786,6 +808,12 @@ func (e *Engine) executeOrder(ctx context.Context, order *trading.Order, effecti
 			current.ID, chunkSize, executedPrice.String(), current.RemainingPortions, newRemaining)
 		if isFirstFill && commission.IsPositive() {
 			log.Printf("[trading/engine] order %d: commission charged: %s", current.ID, commission.String())
+		}
+
+		if e.fillNotifier != nil {
+			filledOrder := *current
+			filledOrder.RemainingPortions = newRemaining
+			go e.fillNotifier.NotifyOrderExecuted(filledOrder, snapshot.Ticker, chunkSize, executedPrice)
 		}
 
 		if newRemaining == 0 {

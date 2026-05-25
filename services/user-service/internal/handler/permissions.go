@@ -18,6 +18,7 @@ const (
 type BankActuaryClient interface {
 	CreateActuary(ctx context.Context, employeeID int64, actuaryType string, bearerToken string) error
 	DeleteActuary(ctx context.Context, employeeID int64, oldActuaryType string, bearerToken string) error
+	LogPermissionChange(ctx context.Context, actorID, employeeID int64, oldPerms, newPerms []string, bearerToken string) error
 }
 
 // appendIfMissing returns codes with val appended only when val is not already

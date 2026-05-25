@@ -169,9 +169,13 @@ func main() {
 		accountPublisher = &worker.NoOpAccountEmailPublisher{}
 	}
 
+	auditLogRepo := repository.NewAuditLogRepository(db)
+	auditLogger := handler.NewSystemAuditLogger(auditLogRepo)
+	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo, cfg.JWTAccessSecret)
+
 	actuaryRepo := repository.NewActuaryRepository(sqlDB)
 	actuaryService := service.NewActuaryService(actuaryRepo)
-	actuaryHandler := handler.NewActuaryHandler(actuaryService)
+	actuaryHandler := handler.NewActuaryHandler(actuaryService, auditLogger)
 
 	exchangeProvider := repository.NewExchangeRateProvider(cfg.ExchangeRateAPIKey, cfg.ExchangeRateAPIBaseURL)
 	exchangeTransferRepo := repository.NewExchangeTransferRepository(db)
@@ -181,6 +185,19 @@ func main() {
 	marginChecker := repository.NewMarginChecker(db, exchangeService)
 	fundsManager := repository.NewFundsManager(db, exchangeService, cfg.ExchangeProvizijaRate)
 	tradingService := trading.NewTradingService(orderRepo, listingService, actuaryRepo, marginChecker, fundsManager)
+
+	// ── Order notification publisher ──────────────────────────────────────────
+	emailResolver := worker.NewUserServiceEmailResolver(func(ctx context.Context, userID int64) (string, error) {
+		return userClient.GetClientEmail(ctx, userID)
+	})
+	var orderNotifier worker.OrderNotifier
+	if cfg.RabbitMQURL != "" {
+		orderNotifier = worker.NewOrderNotificationPublisher(cfg.RabbitMQURL, emailResolver, cfg.JWTAccessSecret)
+		log.Printf("[main] order notification publisher konfigurisan (RabbitMQ)")
+	} else {
+		orderNotifier = &worker.NoOpOrderNotificationPublisher{}
+		log.Printf("[main] order notification publisher: noop (RabbitMQ nije konfigurisan)")
+	}
 
 	// ── Trading engine (async order execution) ────────────────────────────────
 	// tickBus povezuje ListingRefresherWorker (publisher) sa trading engine-om
@@ -192,9 +209,17 @@ func main() {
 	// The full service is wired below after other dependencies are ready.
 	investmentFundRepo := repository.NewInvestmentFundRepository(db)
 
-	tradingEngine := tradingworker.NewEngine(orderRepo, marketDataProvider, fundsManager, berzaService, db, 0, investmentFundRepo, tickBus)
+	tradingEngine := tradingworker.NewEngine(orderRepo, marketDataProvider, fundsManager, berzaService, db, 0, investmentFundRepo, tickBus, orderNotifier)
 
-	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, tradingService, userClient, accountPublisher)
+	// ── Price alert components ─────────────────────────────────────────────────
+	priceAlertRepo := repository.NewPriceAlertRepository(db)
+	priceAlertService := service.NewPriceAlertService(priceAlertRepo, listingService)
+	priceAlertHandler := handler.NewPriceAlertHandler(priceAlertService, cfg.JWTAccessSecret)
+	priceAlertWorker := worker.NewPriceAlertWorker(priceAlertRepo, cfg.RabbitMQURL)
+	// Composite publisher forwards price ticks to both the trading engine and the price alert worker.
+	compositeTickPublisher := worker.NewCompositePriceTickPublisher(tickBus, priceAlertWorker)
+
+	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, tradingService, userClient, accountPublisher, orderNotifier, auditLogger)
 
 	receiptHandler := handler.NewPaymentReceiptHandler(paymentService, cfg.JWTAccessSecret)
 	marketModeHTTPHandler := handler.NewMarketModeHTTPHandler(marketModeStore, cfg.JWTAccessSecret)
@@ -207,9 +232,34 @@ func main() {
 	// kapitalnu dobit (15%). Deli je TaxHandler, MonthlyTaxWorker i PortfolioHandler.
 	taxService := service.NewTaxService(db, exchangeService, userClient, cfg.StateRevenueAccountID)
 
-	portfolioHandler := handler.NewPortfolioHandler(db, listingService, taxService, cfg.JWTAccessSecret)
-	taxHandler := handler.NewTaxHandler(taxService, cfg.JWTAccessSecret)
-	myOrdersHandler := handler.NewMyOrdersHandler(tradingService, cfg.JWTAccessSecret)
+	dividendPayoutRepo := repository.NewDividendPayoutRepository(db)
+
+	dividendWorker := worker.NewDividendWorker(
+		dividendPayoutRepo,
+		investmentFundRepo,
+		db,
+		exchangeService,
+		cfg.RabbitMQURL,
+	)
+
+	portfolioHandler := handler.NewPortfolioHandler(db, listingService, taxService, dividendPayoutRepo, cfg.JWTAccessSecret)
+	taxHandler := handler.NewTaxHandler(taxService, cfg.JWTAccessSecret, auditLogger)
+	myOrdersHandler := handler.NewMyOrdersHandler(tradingService, db, cfg.JWTAccessSecret)
+
+	watchlistRepo := repository.NewWatchlistRepository(db)
+	watchlistHandler := handler.NewWatchlistHandler(watchlistRepo, cfg.JWTAccessSecret)
+
+	recurringOrderRepo := repository.NewRecurringOrderRepository(db)
+	recurringOrderHandler := handler.NewRecurringOrderHandler(recurringOrderRepo, db, cfg.JWTAccessSecret)
+
+	recurringOrderWorker := worker.NewRecurringOrderWorker(
+		recurringOrderRepo,
+		tradingService,
+		db,
+		cfg.RabbitMQURL,
+		emailResolver,
+	)
+
 	tradingFXHandler := handler.NewTradingFXHandler(tradingService, accountService, exchangeService, cfg.JWTAccessSecret)
 
 	// ── InvestmentFundHandler — Discovery, Details, Create, FundOrder (Celina 4) ─
@@ -233,7 +283,7 @@ func main() {
 	fundHandler := handler.NewFundHandler(db, exchangeService, investmentFundService, cfg.JWTAccessSecret)
 
 	// InternalActuaryHandler proširen za prenos menadžmenta fondova
-	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret)
+	internalActuaryHandler := handler.NewInternalActuaryHandler(actuaryService, investmentFundService, cfg.JWTAccessSecret, auditLogger)
 
 	// ── BankProfitHandler — actuary-performance + fund-positions (Celina 4) ──
 	bankProfitHandler := handler.NewBankProfitHandler(db, investmentFundService, exchangeService, userClient, cfg.JWTAccessSecret)
@@ -243,7 +293,15 @@ func main() {
 	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
 	otcRepo := repository.NewOTCRepository(db)
 	otcService := service.NewOTCService(db, otcRepo, paymentService)
-	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID, userClient)
+	var otcNotifier worker.OTCNotifier
+	if cfg.RabbitMQURL != "" {
+		otcNotifier = worker.NewAMQPOTCNotifier(cfg.RabbitMQURL, emailResolver, cfg.JWTAccessSecret)
+		log.Printf("[main] OTC notification publisher konfigurisan (RabbitMQ)")
+	} else {
+		otcNotifier = &worker.NoOpOTCNotifier{}
+		log.Printf("[main] OTC notification publisher: noop (RabbitMQ nije konfigurisan)")
+	}
+	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID, userClient, otcNotifier)
 
 	// ── OTC Contracts & SAGA (Celina 4) ──────────────────────────────────────
 	// OTCContractService orkestira SAGA tok za izvršavanje ("Iskoristi") OTC ugovora.
@@ -405,6 +463,7 @@ func main() {
 	httpMux.Handle("/bank/investment-funds", investmentFundHandler)                                        // GET (discovery) + POST (kreiranje) fonda
 	// OTC (Faza 2) — Faza 2 spec: /api/otc/offers...
 	httpMux.Handle("/api/otc/marketplace", otcHandler) // GET — public_shares marketplace (Faza 2)
+	httpMux.Handle("/api/otc/history", otcHandler)     // GET — negotiation history with step log
 	httpMux.Handle("/api/otc/offers", otcHandler)      // POST (create) + GET (list)
 	httpMux.Handle("/api/otc/offers/", otcHandler)     // GET /{id}, PATCH /{id}/{counter|accept|decline}
 	// OTC Contracts & SAGA (Celina 4) — /api/otc/contracts...
@@ -429,6 +488,22 @@ func main() {
 	// Bank Profit Portal (Celina 4) — supervisor-only analytics
 	httpMux.Handle("GET /bank/actuary-performance", http.HandlerFunc(bankProfitHandler.ActuaryPerformanceHandler))
 	httpMux.Handle("GET /bank/fund-positions", http.HandlerFunc(bankProfitHandler.FundPositionsHandler))
+
+	// Price Alerts — POST/GET /bank/price-alerts, DELETE /bank/price-alerts/{id}
+	httpMux.Handle("/bank/price-alerts", priceAlertHandler)
+	httpMux.Handle("/bank/price-alerts/", priceAlertHandler)
+
+	// Watchlists — GET/POST /bank/watchlists, GET/DELETE /bank/watchlists/{id}, POST/DELETE items
+	httpMux.Handle("/bank/watchlists", watchlistHandler)
+	httpMux.Handle("/bank/watchlists/", watchlistHandler)
+
+	// Recurring Orders (DCA) — POST/GET /bank/recurring-orders, GET/PATCH/DELETE /bank/recurring-orders/{id}
+	httpMux.Handle("/bank/recurring-orders", recurringOrderHandler)
+	httpMux.Handle("/bank/recurring-orders/", recurringOrderHandler)
+
+	// Audit log — GET /bank/audit-log, POST /bank/internal/audit
+	httpMux.Handle("GET /bank/audit-log", auditLogHandler)
+	httpMux.Handle("POST /bank/internal/audit", auditLogHandler)
 
 	httpMux.Handle("/", gwMux) // sve ostalo → gRPC-Gateway
 
@@ -459,12 +534,12 @@ func main() {
 	go futuresExpiryWorker.Start(ctx)
 
 	// ── 7e3. Daily scan: VALID OTC contracts past settlement_date → EXPIRED ───
-	otcContractExpiryWorker := worker.NewOTCContractExpiryWorker(otcRepo)
+	otcContractExpiryWorker := worker.NewOTCContractExpiryWorker(otcRepo, otcNotifier)
 	go otcContractExpiryWorker.Start(ctx)
 
 	// ── 7c. Start ListingRefresherWorker (osvežava cene hartija periodično) ────
 	listingRefreshInterval := time.Duration(cfg.ListingRefreshIntervalMinutes) * time.Minute
-	listingRefresherWorker := worker.NewListingRefresherWorker(listingRepo, listingRefreshInterval, cfg.EODHDAPIKey, cfg.FinnhubAPIKey, cfg.AlphaVantageAPIKey, cfg.ListingRequireLiveQuotes, tickBus)
+	listingRefresherWorker := worker.NewListingRefresherWorker(listingRepo, listingRefreshInterval, cfg.EODHDAPIKey, cfg.FinnhubAPIKey, cfg.AlphaVantageAPIKey, cfg.ListingRequireLiveQuotes, compositeTickPublisher)
 	go listingRefresherWorker.Start(ctx)
 
 	// ── 7d. Start DailyLimitResetWorker (resetuje used_limit agenata u 23:59) ─
@@ -528,6 +603,12 @@ func main() {
 	}
 	fundPerfWorker := worker.NewFundPerformanceWorker(snapshotRunner)
 	go fundPerfWorker.Start(ctx)
+
+	// ── 7i. Start RecurringOrderWorker (DCA — fires due orders every minute) ─
+	go recurringOrderWorker.Start(ctx)
+
+	// ── 7j. Start DividendWorker (quarterly dividend payouts) ────────────────
+	go dividendWorker.Start(ctx)
 
 	// ── 7b. Start ActuaryConsumer (RabbitMQ event listener) ──────────────────
 	// Listens on the user_created queue and auto-provisions actuary profiles
