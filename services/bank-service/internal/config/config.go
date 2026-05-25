@@ -108,6 +108,10 @@ type Config struct {
 	InterbankHTTPTimeoutSeconds int // env: INTERBANK_HTTP_TIMEOUT_SECONDS (default 15)
 	// InterbankBankDisplayName — prikazno ime ove banke za GET /user/{routing}/{id}.
 	InterbankBankDisplayName string // env: INTERBANK_BANK_DISPLAY_NAME
+
+	// FCMServerKey — Firebase Cloud Messaging legacy server key.
+	// Ako je prazan, FCMDispatcher upisuje in-app notifikacije ali ne šalje push.
+	FCMServerKey string // env: FCM_SERVER_KEY
 }
 
 // Load reads ENV vars and returns a populated Config.
@@ -166,6 +170,8 @@ func Load() (*Config, error) {
 		InterbankRetryBackoffSeconds: getEnvInt("INTERBANK_RETRY_BACKOFF_SECONDS", 30),
 		InterbankHTTPTimeoutSeconds:  getEnvInt("INTERBANK_HTTP_TIMEOUT_SECONDS", 15),
 		InterbankBankDisplayName:     getEnv("INTERBANK_BANK_DISPLAY_NAME", "EXBanka 2"),
+
+		FCMServerKey: os.Getenv("FCM_SERVER_KEY"),
 	}, nil
 }
 

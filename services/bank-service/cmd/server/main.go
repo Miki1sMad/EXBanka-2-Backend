@@ -293,15 +293,37 @@ func main() {
 	// putanju (knjiženja u core_banking.transakcija + FX kroz trezor banke).
 	otcRepo := repository.NewOTCRepository(db)
 	otcService := service.NewOTCService(db, otcRepo, paymentService)
-	var otcNotifier worker.OTCNotifier
+
+	// ── FCM dispatcher za in-app inbox + push notifikacije ────────────────────
+	// Bez FCM_SERVER_KEY-a, dispatcher i dalje upisuje u push_notifications inbox,
+	// samo ne šalje FCM HTTP poziv. Mobilni klijent kroz /bank/user/notifications
+	// polling-uje inbox za prikaz.
+	fcmDispatcher := worker.NewFCMDispatcher(db, cfg.FCMServerKey)
+	if cfg.FCMServerKey == "" {
+		log.Printf("[main] FCM_SERVER_KEY nije postavljen — FCMDispatcher radi samo kao in-app inbox writer")
+	} else {
+		log.Printf("[main] FCMDispatcher konfigurisan sa FCM_SERVER_KEY")
+	}
+
+	// OTC notifier: AMQP (postojeći email pipeline) + DB (in-app inbox za mobilni).
+	var amqpOTCNotifier worker.OTCNotifier
 	if cfg.RabbitMQURL != "" {
-		otcNotifier = worker.NewAMQPOTCNotifier(cfg.RabbitMQURL, emailResolver, cfg.JWTAccessSecret)
+		amqpOTCNotifier = worker.NewAMQPOTCNotifier(cfg.RabbitMQURL, emailResolver, cfg.JWTAccessSecret)
 		log.Printf("[main] OTC notification publisher konfigurisan (RabbitMQ)")
 	} else {
-		otcNotifier = &worker.NoOpOTCNotifier{}
+		amqpOTCNotifier = &worker.NoOpOTCNotifier{}
 		log.Printf("[main] OTC notification publisher: noop (RabbitMQ nije konfigurisan)")
 	}
+	dbOTCNotifier := worker.NewDBOTCNotifier(fcmDispatcher)
+	otcNotifier := worker.NewCompositeOTCNotifier(amqpOTCNotifier, dbOTCNotifier)
+	log.Printf("[main] OTC notifier: composite (email + in-app inbox)")
+
 	otcHandler := handler.NewOTCHandler(otcService, cfg.JWTAccessSecret, cfg.OwnBankID, userClient, otcNotifier)
+
+	// ── Dodatni handler-i za mobilni klijent (nove funkcionalnosti) ──────────
+	exchangeHistoryHandler := handler.NewExchangeHistoryHandler(db, cfg.JWTAccessSecret)
+	devicesHandler := handler.NewDevicesHandler(db, cfg.JWTAccessSecret)
+	fundMetricsHandler := handler.NewFundMetricsHandler(db, cfg.JWTAccessSecret)
 
 	// ── OTC Contracts & SAGA (Celina 4) ──────────────────────────────────────
 	// OTCContractService orkestira SAGA tok za izvršavanje ("Iskoristi") OTC ugovora.
@@ -446,6 +468,10 @@ func main() {
 	httpMux.Handle("/bank/client/exchange-transfers", exchangeTransferHandler)                             // POST /bank/client/exchange-transfers
 	httpMux.Handle("/bank/exchange-rates", exchangeRateHandler)                                            // GET /bank/exchange-rates[?from=X&to=Y&amount=Z]
 	httpMux.Handle("/bank/exchange-rates/execute", exchangeRateHandler)                                    // POST /bank/exchange-rates/execute
+	httpMux.Handle("/bank/exchange-rates/history", exchangeHistoryHandler)                                 // GET /bank/exchange-rates/history?oznaka=&from=&to=&days=
+	httpMux.Handle("/bank/user/devices", devicesHandler)                                                   // POST/DELETE /bank/user/devices
+	httpMux.Handle("/bank/user/notifications", devicesHandler)                                             // GET /bank/user/notifications
+	httpMux.Handle("/bank/user/notifications/", devicesHandler)                                            // POST /bank/user/notifications/{id}/read, /read-all
 	httpMux.Handle("POST /bank/cards/request", karticaRequestHandler)                                      // POST /bank/cards/request (Flow 2 Korak 1)
 	httpMux.Handle("POST /bank/cards/confirm", karticaRequestHandler)                                      // POST /bank/cards/confirm (Flow 2 Korak 2)
 	httpMux.Handle("GET /bank/cards/my", klientKarticeHandler)                                             // GET  /bank/cards/my (klijentske kartice)
@@ -457,6 +483,7 @@ func main() {
 	httpMux.Handle("/bank/tax/", taxHandler)                                                               // GET /bank/tax/users, POST /bank/tax/calculate
 	httpMux.Handle("/bank/funds/", fundHandler)                                                            // GET /bank/funds, POST /bank/funds/{id}/invest, POST /bank/funds/{id}/withdraw
 	httpMux.Handle("/bank/funds", fundHandler)                                                             // GET /bank/funds (without trailing slash)
+	httpMux.Handle("GET /bank/funds/{id}/metrics", fundMetricsHandler)                                     // napredne metrike (Sharpe, drawdown, volatilnost, godišnji prinos)
 	httpMux.Handle("GET /bank/bank-accounts", http.HandlerFunc(investmentFundHandler.BankAccountsHandler)) // GET /bank/bank-accounts — RSD računi banke (supervizor/admin)
 	httpMux.Handle("/bank/investment-funds/orders", investmentFundHandler)                                 // POST /bank/investment-funds/orders — nalog za kupovinu za fond
 	httpMux.Handle("/bank/investment-funds/", investmentFundHandler)                                       // GET /bank/investment-funds/{id} — detalj fonda
@@ -603,6 +630,11 @@ func main() {
 	}
 	fundPerfWorker := worker.NewFundPerformanceWorker(snapshotRunner)
 	go fundPerfWorker.Start(ctx)
+
+	// ── 7g2. Start ExchangeRateSnapshotWorker (daily snapshot kursne liste) ──
+	// Pri startu: 30 dana backfill ako tabela nema podataka. Zatim dnevni snapshot.
+	exchangeRateSnapshotWorker := worker.NewExchangeRateSnapshotWorker(db, exchangeService)
+	go exchangeRateSnapshotWorker.Start(ctx)
 
 	// ── 7i. Start RecurringOrderWorker (DCA — fires due orders every minute) ─
 	go recurringOrderWorker.Start(ctx)
