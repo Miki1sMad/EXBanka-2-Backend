@@ -56,6 +56,38 @@ func (c *BankServiceClient) CreateActuary(ctx context.Context, employeeID int64,
 	return nil
 }
 
+// LogPermissionChange calls POST /bank/internal/audit to record a permission change event.
+func (c *BankServiceClient) LogPermissionChange(ctx context.Context, actorID, employeeID int64, oldPerms, newPerms []string, bearerToken string) error {
+	body, _ := json.Marshal(map[string]any{
+		"action":    "PERMISSION_CHANGED",
+		"actor_id":  actorID,
+		"target_id": employeeID,
+		"details": map[string]any{
+			"old_permissions": oldPerms,
+			"new_permissions": newPerms,
+		},
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/bank/internal/audit", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build log-permission-change request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("log permission change HTTP call: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("log permission change: bank-service returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
 // DeleteActuary calls DELETE /bank/internal/actuary/{employeeID} to remove an actuary_info record.
 // oldActuaryType ("SUPERVISOR" or "AGENT") is forwarded as a query param so bank-service can
 // trigger fund transfer even when the actuary_info row is missing (e.g. seeded users).

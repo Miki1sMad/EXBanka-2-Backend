@@ -50,6 +50,7 @@ type PortfolioHandler struct {
 	db             *gorm.DB
 	listingService domain.ListingService
 	taxService     *service.TaxService
+	dividendRepo   domain.DividendPayoutRepository
 	jwtSecret      string
 }
 
@@ -59,12 +60,14 @@ func NewPortfolioHandler(
 	db *gorm.DB,
 	listingService domain.ListingService,
 	taxService *service.TaxService,
+	dividendRepo domain.DividendPayoutRepository,
 	jwtSecret string,
 ) *PortfolioHandler {
 	return &PortfolioHandler{
 		db:             db,
 		listingService: listingService,
 		taxService:     taxService,
+		dividendRepo:   dividendRepo,
 		jwtSecret:      jwtSecret,
 	}
 }
@@ -88,6 +91,8 @@ func (h *PortfolioHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.publishShares(w, r, claims)
 	case path == "/bank/portfolio/exercise" && r.Method == http.MethodPost:
 		h.exerciseOption(w, r, claims)
+	case path == "/bank/portfolio/dividends" && r.Method == http.MethodGet:
+		h.getDividends(w, r, claims)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not found")
 	}
@@ -766,6 +771,55 @@ func (h *PortfolioHandler) exerciseOption(w http.ResponseWriter, r *http.Request
 		"marketPrice": listing.Price,
 		"optionType":  details.OptionType,
 	})
+}
+
+// ─── GET /bank/portfolio/dividends ───────────────────────────────────────────
+
+type dividendPayoutResponse struct {
+	ID           int64   `json:"id"`
+	ListingID    int64   `json:"listingId"`
+	Ticker       string  `json:"ticker"`
+	Quantity     int64   `json:"quantity"`
+	PriceOnDate  float64 `json:"priceOnDate"`
+	GrossAmount  float64 `json:"grossAmount"`
+	TaxAmountRSD float64 `json:"taxAmountRsd"`
+	NetAmount    float64 `json:"netAmount"`
+	Currency     string  `json:"currency"`
+	PaymentDate  string  `json:"paymentDate"`
+	IsActuary    bool    `json:"isActuary"`
+}
+
+func (h *PortfolioHandler) getDividends(w http.ResponseWriter, r *http.Request, claims *auth.AccessClaims) {
+	userID, err := strconv.ParseInt(claims.Subject, 10, 64)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "invalid user id in token")
+		return
+	}
+
+	payouts, err := h.dividendRepo.ListForUser(userID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "query error: "+err.Error())
+		return
+	}
+
+	resp := make([]dividendPayoutResponse, 0, len(payouts))
+	for _, p := range payouts {
+		resp = append(resp, dividendPayoutResponse{
+			ID:           p.ID,
+			ListingID:    p.ListingID,
+			Ticker:       p.Ticker,
+			Quantity:     p.Quantity,
+			PriceOnDate:  p.PriceOnDate,
+			GrossAmount:  p.GrossAmount,
+			TaxAmountRSD: p.TaxAmountRSD,
+			NetAmount:    p.NetAmount,
+			Currency:     p.Currency,
+			PaymentDate:  p.PaymentDate.Format("2006-01-02"),
+			IsActuary:    p.IsActuary,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{"dividends": resp})
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

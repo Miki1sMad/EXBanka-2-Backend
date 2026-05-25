@@ -8,15 +8,18 @@ import (
 	"banka-backend/services/bank-service/internal/domain"
 )
 
+const expiryWarnDays = 3 // dana unapred za upozorenje pre isteka ugovora
+
 // OTCContractExpiryWorker jednom dnevno skenira sve VALID OTC ugovore čiji je
 // settlement_date prošao i postavlja im status na EXPIRED.
-// Bez ovog workera status u bazi ostaje VALID zauvek, što zbunjuje korisnika.
+// Pored toga, šalje notifikaciju korisnicima čiji ugovori ističu za expiryWarnDays dana.
 type OTCContractExpiryWorker struct {
-	repo domain.OTCRepository
+	repo     domain.OTCRepository
+	notifier OTCNotifier
 }
 
-func NewOTCContractExpiryWorker(repo domain.OTCRepository) *OTCContractExpiryWorker {
-	return &OTCContractExpiryWorker{repo: repo}
+func NewOTCContractExpiryWorker(repo domain.OTCRepository, notifier OTCNotifier) *OTCContractExpiryWorker {
+	return &OTCContractExpiryWorker{repo: repo, notifier: notifier}
 }
 
 // Start blokira dok se ctx ne otkaže. Prva provera ide 1 minutu nakon pokretanja
@@ -40,10 +43,20 @@ func (w *OTCContractExpiryWorker) Start(ctx context.Context) {
 func (w *OTCContractExpiryWorker) run(ctx context.Context) {
 	n, err := w.repo.ExpireOverdueContracts(ctx)
 	if err != nil {
-		log.Printf("[worker] OTCContractExpiry: greška: %v", err)
+		log.Printf("[worker] OTCContractExpiry: greška pri isteku: %v", err)
+	} else if n > 0 {
+		log.Printf("[worker] OTCContractExpiry: %d ugovor(a) označeno kao EXPIRED", n)
+	}
+
+	expiring, err := w.repo.ListContractsExpiringSoon(ctx, expiryWarnDays)
+	if err != nil {
+		log.Printf("[worker] OTCContractExpiry: greška pri dohvatu ugovora koji uskoro ističu: %v", err)
 		return
 	}
-	if n > 0 {
-		log.Printf("[worker] OTCContractExpiry: %d ugovor(a) označeno kao EXPIRED", n)
+	for _, c := range expiring {
+		w.notifier.NotifyContractExpiringSoon(c, expiryWarnDays)
+	}
+	if len(expiring) > 0 {
+		log.Printf("[worker] OTCContractExpiry: %d ugovor(a) — upozorenje %d dana pre isteka", len(expiring), expiryWarnDays)
 	}
 }

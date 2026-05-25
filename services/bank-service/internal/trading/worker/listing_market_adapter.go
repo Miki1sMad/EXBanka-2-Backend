@@ -35,6 +35,7 @@ func (p *listingMarketDataProvider) GetMarketSnapshot(ctx context.Context, listi
 		Volume:      listing.Volume,
 		ExchangeID:  listing.ExchangeID,
 		ListingType: listing.ListingType,
+		Ticker:      listing.Ticker,
 	}
 
 	if listing.DetailsJSON == "" {

@@ -20,10 +20,11 @@ type InternalActuaryHandler struct {
 	service     domain.ActuaryService
 	fundService domain.InvestmentFundService
 	jwtSecret   string
+	auditLogger *SystemAuditLogger
 }
 
-func NewInternalActuaryHandler(service domain.ActuaryService, fundService domain.InvestmentFundService, jwtSecret string) *InternalActuaryHandler {
-	return &InternalActuaryHandler{service: service, fundService: fundService, jwtSecret: jwtSecret}
+func NewInternalActuaryHandler(service domain.ActuaryService, fundService domain.InvestmentFundService, jwtSecret string, auditLogger *SystemAuditLogger) *InternalActuaryHandler {
+	return &InternalActuaryHandler{service: service, fundService: fundService, jwtSecret: jwtSecret, auditLogger: auditLogger}
 }
 
 // requireAdmin validates the Bearer token and checks user_type == "ADMIN".
@@ -60,6 +61,7 @@ func (h *InternalActuaryHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 type createActuaryInternalRequest struct {
 	EmployeeID  int64  `json:"employee_id"`
 	ActuaryType string `json:"actuary_type"` // "SUPERVISOR" or "AGENT"
+	ActorID     int64  `json:"actor_id"`     // optional: admin who triggered the change
 }
 
 func (h *InternalActuaryHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
@@ -83,6 +85,16 @@ func (h *InternalActuaryHandler) handleCreate(w http.ResponseWriter, r *http.Req
 		log.Printf("[internal-actuary] create employee_id=%d: %v", req.EmployeeID, err)
 		http.Error(w, `{"error":"failed to create actuary"}`, http.StatusInternalServerError)
 		return
+	}
+
+	if h.auditLogger != nil {
+		var actorPtr *int64
+		if req.ActorID != 0 {
+			actorPtr = ptr64(req.ActorID)
+		}
+		h.auditLogger.Log(domain.AuditActuaryCreated, actorPtr, ptr64(req.EmployeeID), map[string]interface{}{
+			"actuary_type": string(actuaryType),
+		})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -141,6 +153,19 @@ func (h *InternalActuaryHandler) handleDelete(w http.ResponseWriter, r *http.Req
 			http.Error(w, `{"error":"prenos fondova nije uspeo — permisija nije uklonjena"}`, http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if h.auditLogger != nil {
+		// Best-effort: extract admin ID from JWT for the actor field.
+		var actorPtr *int64
+		if claims, ok := h.requireAdmin(r); ok {
+			if id, err := strconv.ParseInt(claims.Subject, 10, 64); err == nil {
+				actorPtr = ptr64(id)
+			}
+		}
+		h.auditLogger.Log(domain.AuditActuaryDeleted, actorPtr, ptr64(employeeID), map[string]interface{}{
+			"employee_id": employeeID,
+		})
 	}
 
 	w.WriteHeader(http.StatusNoContent)

@@ -187,6 +187,8 @@ func (h *InvestmentFundHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		h.createFund(w, r, claims)
 	case path == "/bank/investment-funds/orders" && r.Method == http.MethodPost:
 		h.createFundOrder(w, r, claims)
+	case path == "/bank/investment-funds/average-performance" && r.Method == http.MethodGet:
+		h.averagePerformance(w, r)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/bank/investment-funds/"):
 		h.fundDetails(w, r, claims, extractInvestmentFundID(path))
 	default:
@@ -206,17 +208,27 @@ func extractInvestmentFundID(path string) int64 {
 
 // ─── GET /bank/investment-funds (Discovery) ───────────────────────────────────
 
+// fundStatsResp is the JSON representation of FundStats (omitted when nil).
+type fundStatsResp struct {
+	AnnualizedReturn    float64 `json:"annualizedReturn"`
+	Volatility          float64 `json:"volatility"`
+	MaxDrawdown         float64 `json:"maxDrawdown"`
+	RewardToVariability float64 `json:"rewardToVariability"`
+	SnapshotCount       int     `json:"snapshotCount"`
+}
+
 // fundDiscoveryItem je JSON reprezentacija fonda u listi.
 type fundDiscoveryItem struct {
-	ID                  string  `json:"id"`
-	Name                string  `json:"name"`
-	Description         string  `json:"description"`
-	FundValueRSD        float64 `json:"fundValueRsd"`
-	Profit              float64 `json:"profit"`
-	LiquidAssets        float64 `json:"liquidAssets"`
-	MinimumContribution float64 `json:"minimumContribution"`
-	ManagerID           string  `json:"managerId"`
-	CreatedAt           string  `json:"createdAt"`
+	ID                  string         `json:"id"`
+	Name                string         `json:"name"`
+	Description         string         `json:"description"`
+	FundValueRSD        float64        `json:"fundValueRsd"`
+	Profit              float64        `json:"profit"`
+	LiquidAssets        float64        `json:"liquidAssets"`
+	MinimumContribution float64        `json:"minimumContribution"`
+	ManagerID           string         `json:"managerId"`
+	CreatedAt           string         `json:"createdAt"`
+	Stats               *fundStatsResp `json:"stats,omitempty"`
 }
 
 type fundDiscoveryResponse struct {
@@ -245,7 +257,7 @@ func (h *InvestmentFundHandler) discoveryList(w http.ResponseWriter, r *http.Req
 
 	resp := make([]fundDiscoveryItem, 0, len(items))
 	for _, item := range items {
-		resp = append(resp, fundDiscoveryItem{
+		di := fundDiscoveryItem{
 			ID:                  strconv.FormatInt(item.ID, 10),
 			Name:                item.Name,
 			Description:         item.Description,
@@ -255,10 +267,42 @@ func (h *InvestmentFundHandler) discoveryList(w http.ResponseWriter, r *http.Req
 			MinimumContribution: item.MinimumContribution,
 			ManagerID:           strconv.FormatInt(item.ManagerID, 10),
 			CreatedAt:           item.CreatedAt.Format(time.RFC3339),
-		})
+		}
+		if item.Stats != nil {
+			di.Stats = &fundStatsResp{
+				AnnualizedReturn:    item.Stats.AnnualizedReturn,
+				Volatility:          item.Stats.Volatility,
+				MaxDrawdown:         item.Stats.MaxDrawdown,
+				RewardToVariability: item.Stats.RewardToVariability,
+				SnapshotCount:       item.Stats.SnapshotCount,
+			}
+		}
+		resp = append(resp, di)
 	}
 
 	writeJSON(w, http.StatusOK, fundDiscoveryResponse{Funds: resp})
+}
+
+// ─── GET /bank/investment-funds/average-performance ──────────────────────────
+
+// averagePerformance returns the average fund_value_rsd across all funds per period.
+// Query params: period = monthly (default) | quarterly | yearly
+func (h *InvestmentFundHandler) averagePerformance(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	points, err := h.fundRepo.GetAveragePerformance(r.Context(), period)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu prosečnih performansi")
+		return
+	}
+	type point struct {
+		Period string  `json:"period"`
+		Value  float64 `json:"value"`
+	}
+	resp := make([]point, len(points))
+	for i, p := range points {
+		resp[i] = point{Period: p.Period, Value: p.Value}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ─── GET /bank/investment-funds/{id} (Details) ────────────────────────────────

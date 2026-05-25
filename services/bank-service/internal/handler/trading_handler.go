@@ -290,6 +290,12 @@ func (h *BankHandler) TradingCreateOrder(ctx context.Context, req *pb.TradingCre
 	if err != nil {
 		return nil, tradingError(err)
 	}
+
+	// Send notification asynchronously — do not block the response.
+	if order.Status == trading.OrderStatusPending {
+		go h.orderNotifier.NotifyOrderPending(*order, listing.Ticker)
+	}
+
 	return &pb.TradingCreateOrderResponse{Order: orderToPb(*order)}, nil
 }
 
@@ -393,6 +399,17 @@ func (h *BankHandler) TradingApproveOrder(ctx context.Context, req *pb.TradingAp
 	if err != nil {
 		return nil, tradingError(err)
 	}
+
+	ticker := h.resolveOrderTicker(ctx, order.ListingID)
+	go h.orderNotifier.NotifyOrderApproved(*order, ticker)
+
+	if h.auditLogger != nil {
+		h.auditLogger.Log(domain.AuditOrderApproved, ptr64(supervisorID), ptr64(order.ID), map[string]interface{}{
+			"orderType": string(order.OrderType),
+			"direction": string(order.Direction),
+		})
+	}
+
 	return &pb.TradingApproveOrderResponse{Order: orderToPb(*order)}, nil
 }
 
@@ -428,6 +445,17 @@ func (h *BankHandler) TradingDeclineOrder(ctx context.Context, req *pb.TradingDe
 	if err != nil {
 		return nil, tradingError(err)
 	}
+
+	ticker := h.resolveOrderTicker(ctx, order.ListingID)
+	go h.orderNotifier.NotifyOrderDeclined(*order, ticker)
+
+	if h.auditLogger != nil {
+		h.auditLogger.Log(domain.AuditOrderDeclined, ptr64(supervisorID), ptr64(order.ID), map[string]interface{}{
+			"orderType": string(order.OrderType),
+			"direction": string(order.Direction),
+		})
+	}
+
 	return &pb.TradingDeclineOrderResponse{Order: orderToPb(*order)}, nil
 }
 
@@ -465,5 +493,25 @@ func (h *BankHandler) TradingCancelOrder(ctx context.Context, req *pb.TradingCan
 	if err != nil {
 		return nil, tradingError(err)
 	}
+
+	ticker := h.resolveOrderTicker(ctx, order.ListingID)
+	go h.orderNotifier.NotifyOrderCanceled(*order, ticker)
+
+	if h.auditLogger != nil {
+		h.auditLogger.Log(domain.AuditOrderCanceled, ptr64(callerID), ptr64(order.ID), map[string]interface{}{
+			"orderType": string(order.OrderType),
+			"direction": string(order.Direction),
+		})
+	}
+
 	return &pb.TradingCancelOrderResponse{Order: orderToPb(*order)}, nil
+}
+
+// resolveOrderTicker returns the ticker symbol for a listing; empty string on error.
+func (h *BankHandler) resolveOrderTicker(ctx context.Context, listingID int64) string {
+	listing, err := h.listingService.GetListingByID(ctx, listingID)
+	if err != nil {
+		return ""
+	}
+	return listing.Ticker
 }

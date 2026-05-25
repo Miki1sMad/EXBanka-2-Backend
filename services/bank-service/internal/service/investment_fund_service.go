@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -209,12 +210,109 @@ func (s *investmentFundService) ListFunds(ctx context.Context, filter domain.Fun
 			InvestmentFund: fund,
 			FundValueRSD:   fundValue,
 			Profit:         profit,
+			Stats:          s.computeStats(ctx, fund.ID),
 		})
 	}
 
 	s.sortFundItems(items, filter.SortBy, filter.SortOrder)
 
 	return items, nil
+}
+
+// computeStats calculates performance statistics from historical snapshots.
+// Returns nil when fewer than domain.MinSnapshotsForStats snapshots exist.
+func (s *investmentFundService) computeStats(ctx context.Context, fundID int64) *domain.FundStats {
+	snapshots, err := s.repo.GetSnapshots(ctx, fundID)
+	if err != nil || len(snapshots) < domain.MinSnapshotsForStats {
+		return nil
+	}
+
+	// ── Annualized return (CAGR) ──────────────────────────────────────────────
+	first := snapshots[0].FundValueRSD
+	last := snapshots[len(snapshots)-1].FundValueRSD
+	days := snapshots[len(snapshots)-1].SnapshotDate.Sub(snapshots[0].SnapshotDate).Hours() / 24.0
+	var annualizedReturn float64
+	if first > 0 && days > 0 {
+		annualizedReturn = math.Pow(last/first, 365.0/days) - 1
+	}
+
+	// ── Monthly returns (last snapshot per calendar month) ────────────────────
+	type monthVal struct {
+		year, month int
+		value       float64
+	}
+	byMonth := map[[2]int]float64{}
+	for _, s := range snapshots {
+		key := [2]int{s.SnapshotDate.Year(), int(s.SnapshotDate.Month())}
+		byMonth[key] = s.FundValueRSD // later snapshot overwrites — keeps last of month
+	}
+	// sort months
+	monthKeys := make([][2]int, 0, len(byMonth))
+	for k := range byMonth {
+		monthKeys = append(monthKeys, k)
+	}
+	sort.Slice(monthKeys, func(i, j int) bool {
+		if monthKeys[i][0] != monthKeys[j][0] {
+			return monthKeys[i][0] < monthKeys[j][0]
+		}
+		return monthKeys[i][1] < monthKeys[j][1]
+	})
+
+	var returns []float64
+	for i := 1; i < len(monthKeys); i++ {
+		prev := byMonth[monthKeys[i-1]]
+		cur := byMonth[monthKeys[i]]
+		if prev > 0 {
+			returns = append(returns, (cur-prev)/prev)
+		}
+	}
+
+	// ── Volatility (annualised std-dev of monthly returns) ───────────────────
+	var volatility float64
+	if len(returns) >= 2 {
+		mean := 0.0
+		for _, r := range returns {
+			mean += r
+		}
+		mean /= float64(len(returns))
+		variance := 0.0
+		for _, r := range returns {
+			d := r - mean
+			variance += d * d
+		}
+		variance /= float64(len(returns) - 1)
+		volatility = math.Sqrt(variance) * math.Sqrt(12) // annualise
+	}
+
+	// ── Max drawdown ─────────────────────────────────────────────────────────
+	peak := snapshots[0].FundValueRSD
+	maxDrawdown := 0.0
+	for _, s := range snapshots[1:] {
+		if s.FundValueRSD > peak {
+			peak = s.FundValueRSD
+		}
+		if peak > 0 {
+			dd := (s.FundValueRSD - peak) / peak
+			if dd < maxDrawdown {
+				maxDrawdown = dd
+			}
+		}
+	}
+	maxDrawdown = math.Abs(maxDrawdown)
+
+	// ── Reward-to-variability ─────────────────────────────────────────────────
+	var rtv float64
+	if volatility > 0 {
+		rtv = annualizedReturn / volatility
+	}
+
+	return &domain.FundStats{
+		AnnualizedReturn:    annualizedReturn,
+		Volatility:          volatility,
+		MaxDrawdown:         maxDrawdown,
+		RewardToVariability: rtv,
+		SnapshotCount:       len(snapshots),
+	}
 }
 
 // sortFundItems sortira listu fondova prema zadatim parametrima.
@@ -224,9 +322,27 @@ func (s *investmentFundService) sortFundItems(items []domain.FundListItem, sortB
 	}
 	desc := strings.ToUpper(strings.TrimSpace(sortOrder)) == "DESC"
 
+	statVal := func(item domain.FundListItem, field string) float64 {
+		if item.Stats == nil {
+			return math.Inf(-1) // funds without stats sort last when ascending
+		}
+		switch field {
+		case "annualizedreturn":
+			return item.Stats.AnnualizedReturn
+		case "rewardtovariability":
+			return item.Stats.RewardToVariability
+		case "maxdrawdown":
+			return item.Stats.MaxDrawdown
+		case "volatility":
+			return item.Stats.Volatility
+		}
+		return 0
+	}
+
 	sort.Slice(items, func(i, j int) bool {
 		var less bool
-		switch strings.ToLower(strings.TrimSpace(sortBy)) {
+		key := strings.ToLower(strings.TrimSpace(sortBy))
+		switch key {
 		case "name":
 			less = strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
 		case "description":
@@ -237,6 +353,8 @@ func (s *investmentFundService) sortFundItems(items []domain.FundListItem, sortB
 			less = items[i].Profit < items[j].Profit
 		case "minimumcontribution":
 			less = items[i].MinimumContribution < items[j].MinimumContribution
+		case "annualizedreturn", "rewardtovariability", "maxdrawdown", "volatility":
+			less = statVal(items[i], key) < statVal(items[j], key)
 		default:
 			less = items[i].ID < items[j].ID
 		}

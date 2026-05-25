@@ -93,6 +93,45 @@ type OTCSagaStepLogEntry struct {
 
 // ─── Contract DTO-ovi za listanje ─────────────────────────────────────────────
 
+// OTCContractExpiringSoon je ugovor koji uskoro ističe (za notifikacije).
+type OTCContractExpiringSoon struct {
+	OTCContract
+	Ticker string
+}
+
+// OTCOfferHistoryEntry is one recorded step in a negotiation.
+type OTCOfferHistoryEntry struct {
+	ID               int64
+	OfferID          int64
+	Action           string // CREATED | COUNTER | ACCEPTED | DECLINED
+	ChangedBy        int64
+	Amount           *int32
+	PricePerStock    *float64
+	Premium          *float64
+	SettlementDate   *time.Time
+	OldAmount        *int32
+	OldPricePerStock *float64
+	OldPremium       *float64
+	OldSettlementDate *time.Time
+	NewStatus        *string
+	CreatedAt        time.Time
+}
+
+// NegotiationHistoryItem is a completed offer summary with its full step history.
+type NegotiationHistoryItem struct {
+	OTCOfferListItem
+	History []OTCOfferHistoryEntry
+}
+
+// ListCompletedOffersFilter filters completed (non-PENDING) offers.
+type ListCompletedOffersFilter struct {
+	UserID        int64
+	Status        *OTCOfferStatus
+	From          *time.Time
+	To            *time.Time
+	CounterpartID *int64
+}
+
 // OTCContractListItem je projekcija ugovora za GET /api/otc/contracts.
 // Profit je izvedena vrednost: (TrenutnaTrazisCena - StrikePrice) * Amount - Premium.
 type OTCContractListItem struct {
@@ -304,6 +343,16 @@ type OTCRepository interface {
 	// prošao na status EXPIRED. Vraća broj ažuriranih redova.
 	ExpireOverdueContracts(ctx context.Context) (int, error)
 
+	// ListContractsExpiringSoon vraća VALID ugovore čiji je settlement_date
+	// tačno withinDays kalendarskih dana od danas. Koristi se za upozorenja.
+	ListContractsExpiringSoon(ctx context.Context, withinDays int) ([]OTCContractExpiringSoon, error)
+
+	// RecordOfferHistory inserts one history entry. Must be called within the same transaction.
+	RecordOfferHistory(ctx context.Context, entry OTCOfferHistoryEntry) error
+
+	// ListCompletedNegotiations returns finished offers (status != PENDING) for a user with embedded history.
+	ListCompletedNegotiations(ctx context.Context, filter ListCompletedOffersFilter) ([]NegotiationHistoryItem, error)
+
 	// WithTx vraća instancu repoa koja radi nad datom *gorm.DB transakcijom.
 	WithTx(tx interface{}) OTCRepository
 }
@@ -362,6 +411,8 @@ type OTCService interface {
 	ListOffers(ctx context.Context, filter ListOTCOffersFilter) ([]OTCOfferListItem, error)
 	GetOffer(ctx context.Context, offerID, callerID int64) (*OTCOfferListItem, error)
 	ListMarketplace(ctx context.Context, callerID int64) ([]OTCMarketplaceItem, error)
+	// ListCompletedNegotiations returns all finished negotiations for the caller with their step history.
+	ListCompletedNegotiations(ctx context.Context, callerID int64, filter ListCompletedOffersFilter) ([]NegotiationHistoryItem, error)
 }
 
 // OTCContractService upravlja OTC ugovorima i njihovim SAGA izvršavanjem.

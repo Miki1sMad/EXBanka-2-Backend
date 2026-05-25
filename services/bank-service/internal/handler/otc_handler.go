@@ -23,6 +23,7 @@ import (
 
 	"banka-backend/services/bank-service/internal/domain"
 	"banka-backend/services/bank-service/internal/transport"
+	"banka-backend/services/bank-service/internal/worker"
 	auth "banka-backend/shared/auth"
 	"google.golang.org/grpc/metadata"
 )
@@ -33,10 +34,11 @@ type OTCHandler struct {
 	jwtSecret  string
 	ownBankID  int64 // ID ove banke; upisuje se u buyer_bank_id/seller_bank_id pri kreiranju ponuda
 	userClient *transport.UserServiceClient
+	notifier   worker.OTCNotifier
 }
 
-func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64, userClient *transport.UserServiceClient) *OTCHandler {
-	return &OTCHandler{svc: svc, jwtSecret: jwtSecret, ownBankID: ownBankID, userClient: userClient}
+func NewOTCHandler(svc domain.OTCService, jwtSecret string, ownBankID int64, userClient *transport.UserServiceClient, notifier worker.OTCNotifier) *OTCHandler {
+	return &OTCHandler{svc: svc, jwtSecret: jwtSecret, ownBankID: ownBankID, userClient: userClient, notifier: notifier}
 }
 
 // ServeHTTP dispetcher. Putanju cepamo ručno da bismo ostali konzistentni sa
@@ -47,6 +49,15 @@ func (h *OTCHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	callerID, callerType, err := h.authenticate(r)
 	if err != nil {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	if r.URL.Path == "/api/otc/history" {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		h.handleHistory(w, r, callerID)
 		return
 	}
 
@@ -341,6 +352,7 @@ func (h *OTCHandler) handleCounter(w http.ResponseWriter, r *http.Request, id, c
 		return
 	}
 	writeOTCJSON(w, http.StatusOK, offerToDTO(*offer, callerID))
+	go h.notifier.NotifyCounterOffer(*offer, callerID)
 }
 
 func (h *OTCHandler) handleAccept(w http.ResponseWriter, r *http.Request, id, callerID int64) {
@@ -361,6 +373,17 @@ func (h *OTCHandler) handleAccept(w http.ResponseWriter, r *http.Request, id, ca
 		return
 	}
 	writeOTCJSON(w, http.StatusOK, contractToDTO(*contract))
+	// Build a minimal offer stub from contract fields (avoids an extra DB query)
+	offerStub := domain.OTCOffer{
+		ID:             id,
+		ListingID:      contract.ListingID,
+		BuyerID:        contract.BuyerID,
+		SellerID:       contract.SellerID,
+		Amount:         contract.Amount,
+		Premium:        contract.Premium,
+		SettlementDate: contract.SettlementDate,
+	}
+	go h.notifier.NotifyOfferAccepted(offerStub, *contract)
 }
 
 func (h *OTCHandler) handleDecline(w http.ResponseWriter, r *http.Request, id, callerID int64) {
@@ -370,6 +393,7 @@ func (h *OTCHandler) handleDecline(w http.ResponseWriter, r *http.Request, id, c
 		return
 	}
 	writeOTCJSON(w, http.StatusOK, offerToDTO(*offer, callerID))
+	go h.notifier.NotifyOfferDeclined(*offer, callerID)
 }
 
 type marketplaceItemDTO struct {
@@ -478,6 +502,103 @@ func (h *OTCHandler) resolveUserName(r *http.Request, userID int64) string {
 		return strings.TrimSpace(info.FirstName + " " + info.LastName)
 	}
 	return ""
+}
+
+func (h *OTCHandler) handleHistory(w http.ResponseWriter, r *http.Request, callerID int64) {
+	q := r.URL.Query()
+	filter := domain.ListCompletedOffersFilter{}
+	if s := q.Get("status"); s != "" {
+		v := domain.OTCOfferStatus(strings.ToUpper(s))
+		filter.Status = &v
+	}
+	if f := q.Get("from"); f != "" {
+		if t, err := time.Parse("2006-01-02", f); err == nil {
+			filter.From = &t
+		}
+	}
+	if t := q.Get("to"); t != "" {
+		if parsed, err := time.Parse("2006-01-02", t); err == nil {
+			filter.To = &parsed
+		}
+	}
+	if cpStr := q.Get("counterpartId"); cpStr != "" {
+		if cp, err := strconv.ParseInt(cpStr, 10, 64); err == nil {
+			filter.CounterpartID = &cp
+		}
+	}
+	items, err := h.svc.ListCompletedNegotiations(r.Context(), callerID, filter)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "greška pri dohvatu istorije pregovora")
+		return
+	}
+	type historyEntryDTO struct {
+		ID                int64    `json:"id"`
+		Action            string   `json:"action"`
+		ChangedBy         int64    `json:"changedBy"`
+		Amount            *int32   `json:"amount,omitempty"`
+		PricePerStock     *float64 `json:"pricePerStock,omitempty"`
+		Premium           *float64 `json:"premium,omitempty"`
+		SettlementDate    *string  `json:"settlementDate,omitempty"`
+		OldAmount         *int32   `json:"oldAmount,omitempty"`
+		OldPricePerStock  *float64 `json:"oldPricePerStock,omitempty"`
+		OldPremium        *float64 `json:"oldPremium,omitempty"`
+		OldSettlementDate *string  `json:"oldSettlementDate,omitempty"`
+		NewStatus         *string  `json:"newStatus,omitempty"`
+		CreatedAt         string   `json:"createdAt"`
+	}
+	type negotiationDTO struct {
+		OfferID      int64             `json:"offerId"`
+		ListingID    int64             `json:"listingId"`
+		Ticker       string            `json:"ticker"`
+		StockName    string            `json:"stockName"`
+		BuyerID      int64             `json:"buyerId"`
+		SellerID     int64             `json:"sellerId"`
+		FinalStatus  string            `json:"finalStatus"`
+		CreatedAt    string            `json:"createdAt"`
+		LastModified string            `json:"lastModified"`
+		History      []historyEntryDTO `json:"history"`
+	}
+	out := make([]negotiationDTO, 0, len(items))
+	for _, it := range items {
+		hist := make([]historyEntryDTO, 0, len(it.History))
+		for _, he := range it.History {
+			e := historyEntryDTO{
+				ID:               he.ID,
+				Action:           he.Action,
+				ChangedBy:        he.ChangedBy,
+				Amount:           he.Amount,
+				PricePerStock:    he.PricePerStock,
+				Premium:          he.Premium,
+				OldAmount:        he.OldAmount,
+				OldPricePerStock: he.OldPricePerStock,
+				OldPremium:       he.OldPremium,
+				NewStatus:        he.NewStatus,
+				CreatedAt:        he.CreatedAt.UTC().Format(time.RFC3339),
+			}
+			if he.SettlementDate != nil {
+				s := he.SettlementDate.Format("2006-01-02")
+				e.SettlementDate = &s
+			}
+			if he.OldSettlementDate != nil {
+				s := he.OldSettlementDate.Format("2006-01-02")
+				e.OldSettlementDate = &s
+			}
+			hist = append(hist, e)
+		}
+		out = append(out, negotiationDTO{
+			OfferID:      it.ID,
+			ListingID:    it.ListingID,
+			Ticker:       it.Ticker,
+			StockName:    it.StockName,
+			BuyerID:      it.BuyerID,
+			SellerID:     it.SellerID,
+			FinalStatus:  string(it.Status),
+			CreatedAt:    it.CreatedAt.UTC().Format(time.RFC3339),
+			LastModified: it.LastModified.UTC().Format(time.RFC3339),
+			History:      hist,
+		})
+	}
+	writeOTCJSON(w, http.StatusOK, map[string]any{"negotiations": out})
 }
 
 // ─── Error mapping ────────────────────────────────────────────────────────────
