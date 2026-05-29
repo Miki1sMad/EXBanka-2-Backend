@@ -155,15 +155,15 @@ func (h *AuditLogHandler) listEntries(w http.ResponseWriter, r *http.Request) {
 	}
 
 	type entryJSON struct {
-		ID          int64                  `json:"id"`
-		Action      string                 `json:"action"`
-		ActorID     *int64                 `json:"actorId,omitempty"`
-		ActorName   string                 `json:"actorName,omitempty"`
-		ActorEmail  string                 `json:"actorEmail,omitempty"`
-		TargetID    *int64                 `json:"targetId,omitempty"`
-		TargetName  string                 `json:"targetName,omitempty"`
-		Details     map[string]interface{} `json:"details"`
-		CreatedAt   time.Time              `json:"createdAt"`
+		ID         int64                  `json:"id"`
+		Action     string                 `json:"action"`
+		ActorID    *int64                 `json:"actorId,omitempty"`
+		ActorName  string                 `json:"actorName,omitempty"`
+		ActorEmail string                 `json:"actorEmail,omitempty"`
+		TargetID   *int64                 `json:"targetId,omitempty"`
+		TargetName string                 `json:"targetName,omitempty"`
+		Details    map[string]interface{} `json:"details"`
+		CreatedAt  time.Time              `json:"createdAt"`
 	}
 
 	out := make([]entryJSON, 0, len(entries))

@@ -62,9 +62,9 @@ func (w *PriceAlertWorker) Publish(listingID int64, ask, bid float64) {
 			Type:  "PRICE_ALERT",
 			Email: alert.Email,
 			Data: map[string]string{
-				"ticker":        alert.Ticker,
-				"threshold":     strconv.FormatFloat(alert.Threshold, 'f', 4, 64),
-				"current_price": fmt.Sprintf("%.4f", currentPrice),
+				"ticker":          alert.Ticker,
+				"threshold":       strconv.FormatFloat(alert.Threshold, 'f', 4, 64),
+				"current_price":   fmt.Sprintf("%.4f", currentPrice),
 				"direction_label": dirLabel,
 			},
 		}

@@ -507,6 +507,7 @@ func TestListFunds_WithSearch(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(3)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(3)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, ls, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{Search: "alpha"})
@@ -530,6 +531,7 @@ func TestListFunds_SortByName_ASC(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(1)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, ls, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "name", SortOrder: "ASC"})
@@ -555,6 +557,7 @@ func TestListFunds_SortByName_DESC(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, ls, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "name", SortOrder: "DESC"})
@@ -578,6 +581,7 @@ func TestListFunds_SortByFundValue(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "fundvalue", SortOrder: "ASC"})
@@ -601,6 +605,7 @@ func TestListFunds_SortByProfit(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(800), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(100), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "profit", SortOrder: "DESC"})
@@ -624,6 +629,7 @@ func TestListFunds_SortByMinimumContribution(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "minimumcontribution", SortOrder: "ASC"})
@@ -646,6 +652,7 @@ func TestListFunds_SortByDescription(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{SortBy: "description", SortOrder: "ASC"})
@@ -668,6 +675,7 @@ func TestListFunds_SortByDefault(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(1)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(3)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	// sort by unknown field falls through to ID comparison
@@ -688,6 +696,7 @@ func TestListFunds_NoSort(t *testing.T) {
 	repo.On("GetSecurities", ctx, int64(2)).Return([]domain.FundSecurity{}, nil)
 	repo.On("GetTotalInvested", ctx, int64(1)).Return(float64(0), nil)
 	repo.On("GetTotalInvested", ctx, int64(2)).Return(float64(0), nil)
+	repo.On("GetSnapshots", mock.Anything, mock.Anything).Return([]domain.FundSnapshot{}, nil)
 
 	svc := newFundService(repo, &mockListingServiceIF{}, es, &mockAccountServiceIF{}, &mockCurrencyRepo{})
 	items, err := svc.ListFunds(ctx, domain.FundFilter{})

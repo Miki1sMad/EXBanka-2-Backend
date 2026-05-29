@@ -43,9 +43,9 @@ type UserEmailResolver interface {
 
 // OrderNotificationPublisher sends order lifecycle email events via RabbitMQ.
 type OrderNotificationPublisher struct {
-	amqpURL    string
-	resolver   UserEmailResolver
-	jwtSecret  string
+	amqpURL   string
+	resolver  UserEmailResolver
+	jwtSecret string
 }
 
 func NewOrderNotificationPublisher(amqpURL string, resolver UserEmailResolver, jwtSecret string) *OrderNotificationPublisher {

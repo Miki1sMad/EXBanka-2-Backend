@@ -29,7 +29,7 @@ import (
 //   • slanje FCM poruke svim aktivnim uređajima korisnika (ako je server key postavljen)
 type FCMDispatcher struct {
 	db         *gorm.DB
-	serverKey  string       // FCM legacy server key; "" → dispatcher je no-op za push slanje (inbox upis i dalje radi)
+	serverKey  string // FCM legacy server key; "" → dispatcher je no-op za push slanje (inbox upis i dalje radi)
 	httpClient *http.Client
 }
 

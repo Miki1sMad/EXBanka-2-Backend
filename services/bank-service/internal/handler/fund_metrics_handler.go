@@ -40,16 +40,16 @@ func NewFundMetricsHandler(db *gorm.DB, jwtSecret string) *FundMetricsHandler {
 }
 
 type fundMetricsResponse struct {
-	Available        bool    `json:"available"`
-	FundID           int64   `json:"fundId"`
-	SampleSize       int     `json:"sampleSize"`
-	PeriodStart      string  `json:"periodStart,omitempty"`
-	PeriodEnd        string  `json:"periodEnd,omitempty"`
-	AnnualReturnPct  float64 `json:"annualReturnPct"`
-	VolatilityPct    float64 `json:"volatilityPct"`
-	MaxDrawdownPct   float64 `json:"maxDrawdownPct"`
-	SharpeRatio      float64 `json:"sharpeRatio"`
-	Note             string  `json:"note,omitempty"`
+	Available       bool    `json:"available"`
+	FundID          int64   `json:"fundId"`
+	SampleSize      int     `json:"sampleSize"`
+	PeriodStart     string  `json:"periodStart,omitempty"`
+	PeriodEnd       string  `json:"periodEnd,omitempty"`
+	AnnualReturnPct float64 `json:"annualReturnPct"`
+	VolatilityPct   float64 `json:"volatilityPct"`
+	MaxDrawdownPct  float64 `json:"maxDrawdownPct"`
+	SharpeRatio     float64 `json:"sharpeRatio"`
+	Note            string  `json:"note,omitempty"`
 }
 
 // ServeHTTP routes GET /bank/funds/{id}/metrics.

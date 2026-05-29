@@ -101,20 +101,20 @@ type OTCContractExpiringSoon struct {
 
 // OTCOfferHistoryEntry is one recorded step in a negotiation.
 type OTCOfferHistoryEntry struct {
-	ID               int64
-	OfferID          int64
-	Action           string // CREATED | COUNTER | ACCEPTED | DECLINED
-	ChangedBy        int64
-	Amount           *int32
-	PricePerStock    *float64
-	Premium          *float64
-	SettlementDate   *time.Time
-	OldAmount        *int32
-	OldPricePerStock *float64
-	OldPremium       *float64
+	ID                int64
+	OfferID           int64
+	Action            string // CREATED | COUNTER | ACCEPTED | DECLINED
+	ChangedBy         int64
+	Amount            *int32
+	PricePerStock     *float64
+	Premium           *float64
+	SettlementDate    *time.Time
+	OldAmount         *int32
+	OldPricePerStock  *float64
+	OldPremium        *float64
 	OldSettlementDate *time.Time
-	NewStatus        *string
-	CreatedAt        time.Time
+	NewStatus         *string
+	CreatedAt         time.Time
 }
 
 // NegotiationHistoryItem is a completed offer summary with its full step history.

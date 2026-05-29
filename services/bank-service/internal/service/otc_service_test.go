@@ -243,6 +243,7 @@ func TestOTCService_CreateOffer_OK(t *testing.T) {
 
 	repo.On("AvailablePublicShares", ctx, int64(2), int64(10), int64(0)).Return(int32(100), nil)
 	repo.On("CreateOffer", ctx, mock.AnythingOfType("domain.OTCOffer")).Return(&domain.OTCOffer{ID: 1}, nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 
 	in := domain.CreateOTCOfferInput{
 		ListingID:      10,
@@ -329,6 +330,7 @@ func TestOTCService_DeclineOffer_Rejected(t *testing.T) {
 	repo.On("GetOfferByIDForUpdate", ctx, int64(1)).Return(offer, nil)
 	// callerID=2 (seller) declines — different from modified_by=1 → REJECTED
 	repo.On("UpdateOfferStatus", ctx, int64(1), domain.OTCOfferRejected, int64(2)).Return(nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 
 	got, err := svc.DeclineOffer(ctx, 1, 2)
 	require.NoError(t, err)
@@ -353,6 +355,7 @@ func TestOTCService_DeclineOffer_Deactivated(t *testing.T) {
 	repo.On("GetOfferByIDForUpdate", ctx, int64(2)).Return(offer, nil)
 	// callerID=1 (buyer who sent offer) pulls it back → DEACTIVATED
 	repo.On("UpdateOfferStatus", ctx, int64(2), domain.OTCOfferDeactivated, int64(1)).Return(nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 
 	got, err := svc.DeclineOffer(ctx, 2, 1)
 	require.NoError(t, err)
@@ -422,6 +425,7 @@ func TestOTCService_CounterOffer_OK(t *testing.T) {
 	repo.On("AvailablePublicShares", ctx, int64(2), int64(20), int64(10)).Return(int32(50), nil)
 	repo.On("UpdateOfferOnCounter", ctx, mock.AnythingOfType("domain.OTCOffer")).Return(nil)
 	repo.On("GetOfferByID", ctx, int64(10)).Return(&domain.OTCOffer{ID: 10, SellerAccountID: &sellerAcc}, nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 
 	in := domain.CounterOTCOfferInput{
 		OfferID: 10, CallerID: 2, // seller counters
@@ -487,6 +491,7 @@ func TestOTCService_AcceptOffer_OK(t *testing.T) {
 	repo.On("GetListingCurrency", ctx, int64(30)).Return("USD", nil)
 	repo.On("UpdateOfferStatus", ctx, int64(20), domain.OTCOfferAccepted, int64(2)).Return(nil)
 	repo.On("CreateContract", ctx, mock.AnythingOfType("domain.OTCContract")).Return(created, nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 	payment.On("ExecuteOTCPremiumTransfer", ctx, mock.Anything, mock.AnythingOfType("domain.OTCPremiumTransferInput")).Return(nil)
 
 	in := domain.AcceptOTCOfferInput{OfferID: 20, CallerID: 2} // seller accepts buyer's last offer
@@ -661,6 +666,7 @@ func TestOTCService_AcceptOffer_PremiumTransferError(t *testing.T) {
 	repo.On("GetListingCurrency", ctx, int64(50)).Return("USD", nil)
 	repo.On("UpdateOfferStatus", ctx, int64(34), domain.OTCOfferAccepted, int64(2)).Return(nil)
 	repo.On("CreateContract", ctx, mock.AnythingOfType("domain.OTCContract")).Return(created, nil)
+	repo.On("RecordOfferHistory", ctx, mock.AnythingOfType("domain.OTCOfferHistoryEntry")).Return(nil)
 	payment.On("ExecuteOTCPremiumTransfer", ctx, mock.Anything, mock.AnythingOfType("domain.OTCPremiumTransferInput")).
 		Return(assert.AnError)
 
