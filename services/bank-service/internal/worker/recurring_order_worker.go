@@ -194,7 +194,13 @@ func advanceNextRun(t time.Time, cadence string) time.Time {
 	case "WEEKLY":
 		return t.AddDate(0, 0, 7)
 	case "MONTHLY":
-		return t.AddDate(0, 1, 0)
+		y, m, d := t.Date()
+		// Day 0 of month m+2 = last day of month m+1 (Go normalizes out-of-range months).
+		lastDay := time.Date(y, m+2, 0, 0, 0, 0, 0, t.Location()).Day()
+		if d > lastDay {
+			d = lastDay
+		}
+		return time.Date(y, m+1, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
 	default:
 		return t.AddDate(0, 0, 1)
 	}

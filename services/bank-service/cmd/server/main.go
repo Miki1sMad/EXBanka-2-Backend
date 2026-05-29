@@ -171,7 +171,7 @@ func main() {
 
 	auditLogRepo := repository.NewAuditLogRepository(db)
 	auditLogger := handler.NewSystemAuditLogger(auditLogRepo)
-	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo, cfg.JWTAccessSecret)
+	auditLogHandler := handler.NewAuditLogHandler(auditLogRepo, cfg.JWTAccessSecret, userClient)
 
 	actuaryRepo := repository.NewActuaryRepository(sqlDB)
 	actuaryService := service.NewActuaryService(actuaryRepo)
@@ -188,7 +188,14 @@ func main() {
 
 	// ── Order notification publisher ──────────────────────────────────────────
 	emailResolver := worker.NewUserServiceEmailResolver(func(ctx context.Context, userID int64) (string, error) {
-		return userClient.GetClientEmail(ctx, userID)
+		if info, err := userClient.GetEmployeeInfo(ctx, userID); err == nil {
+			return info.Email, nil
+		}
+		info, err := userClient.GetClientInfo(ctx, userID)
+		if err != nil {
+			return "", err
+		}
+		return info.Email, nil
 	})
 	var orderNotifier worker.OrderNotifier
 	if cfg.RabbitMQURL != "" {
@@ -213,11 +220,12 @@ func main() {
 
 	// ── Price alert components ─────────────────────────────────────────────────
 	priceAlertRepo := repository.NewPriceAlertRepository(db)
-	priceAlertService := service.NewPriceAlertService(priceAlertRepo, listingService)
-	priceAlertHandler := handler.NewPriceAlertHandler(priceAlertService, cfg.JWTAccessSecret)
 	priceAlertWorker := worker.NewPriceAlertWorker(priceAlertRepo, cfg.RabbitMQURL)
 	// Composite publisher forwards price ticks to both the trading engine and the price alert worker.
 	compositeTickPublisher := worker.NewCompositePriceTickPublisher(tickBus, priceAlertWorker)
+	// Pass priceAlertWorker so CreateAlert immediately checks the current price on creation.
+	priceAlertService := service.NewPriceAlertService(priceAlertRepo, listingService, priceAlertWorker)
+	priceAlertHandler := handler.NewPriceAlertHandler(priceAlertService, cfg.JWTAccessSecret)
 
 	bankHandler := handler.NewBankHandler(currencyService, delatnostService, accountService, paymentService, kreditService, karticaService, berzaService, listingService, exchangeService, tradingService, userClient, accountPublisher, orderNotifier, auditLogger)
 

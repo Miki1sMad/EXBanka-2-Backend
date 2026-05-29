@@ -25,6 +25,7 @@ type watchlistItemRow struct {
 	Name        string    `gorm:"column:name"`
 	ListingType string    `gorm:"column:listing_type"`
 	Price       float64   `gorm:"column:price"`
+	PriceChange float64   `gorm:"column:price_change"`
 	AddedAt     time.Time `gorm:"column:added_at"`
 }
 
@@ -54,6 +55,23 @@ func (r *GormWatchlistRepository) List(userID int64) ([]domain.Watchlist, error)
 		result[i] = domain.Watchlist{ID: m.ID, UserID: m.UserID, Name: m.Name, CreatedAt: m.CreatedAt}
 	}
 	return result, nil
+}
+
+func (r *GormWatchlistRepository) Rename(id, userID int64, name string) (domain.Watchlist, error) {
+	res := r.db.Model(&watchlistModel{}).
+		Where("id = ? AND user_id = ?", id, userID).
+		Update("name", name)
+	if res.Error != nil {
+		return domain.Watchlist{}, res.Error
+	}
+	if res.RowsAffected == 0 {
+		return domain.Watchlist{}, domain.ErrWatchlistNotFound
+	}
+	var m watchlistModel
+	if err := r.db.Where("id = ?", id).First(&m).Error; err != nil {
+		return domain.Watchlist{}, err
+	}
+	return domain.Watchlist{ID: m.ID, UserID: m.UserID, Name: m.Name, CreatedAt: m.CreatedAt}, nil
 }
 
 func (r *GormWatchlistRepository) Delete(id, userID int64) error {
@@ -116,7 +134,14 @@ func (r *GormWatchlistRepository) GetWithItems(id, userID int64) (domain.Watchli
 	var rows []watchlistItemRow
 	r.db.Raw(`
 		SELECT wi.watchlist_id, wi.listing_id, wi.added_at,
-		       l.ticker, l.name, l.listing_type, l.price
+		       l.ticker, l.name, l.listing_type, l.price,
+		       COALESCE((
+		           SELECT ldpi.price_change
+		           FROM core_banking.listing_daily_price_info ldpi
+		           WHERE ldpi.listing_id = l.id
+		           ORDER BY ldpi.date DESC
+		           LIMIT 1
+		       ), 0) AS price_change
 		FROM core_banking.watchlist_items wi
 		JOIN core_banking.listing l ON l.id = wi.listing_id
 		WHERE wi.watchlist_id = ?
@@ -125,14 +150,19 @@ func (r *GormWatchlistRepository) GetWithItems(id, userID int64) (domain.Watchli
 
 	items := make([]domain.WatchlistItem, len(rows))
 	for i, row := range rows {
+		var changePercent float64
+		if prevClose := row.Price - row.PriceChange; prevClose != 0 {
+			changePercent = (row.PriceChange / prevClose) * 100
+		}
 		items[i] = domain.WatchlistItem{
-			WatchlistID: row.WatchlistID,
-			ListingID:   row.ListingID,
-			Ticker:      row.Ticker,
-			Name:        row.Name,
-			ListingType: row.ListingType,
-			Price:       row.Price,
-			AddedAt:     row.AddedAt,
+			WatchlistID:   row.WatchlistID,
+			ListingID:     row.ListingID,
+			Ticker:        row.Ticker,
+			Name:          row.Name,
+			ListingType:   row.ListingType,
+			Price:         row.Price,
+			ChangePercent: changePercent,
+			AddedAt:       row.AddedAt,
 		}
 	}
 	return domain.WatchlistDetail{

@@ -15,15 +15,15 @@ const (
 
 // PriceAlert represents a user-defined price threshold notification.
 type PriceAlert struct {
-	ID        int64
-	UserID    int64
-	ListingID int64
-	Ticker    string
-	Threshold float64
-	Direction PriceAlertDirection
-	Email     string
-	Active    bool
-	CreatedAt time.Time
+	ID        int64               `json:"id"`
+	UserID    int64               `json:"userId"`
+	ListingID int64               `json:"listingId"`
+	Ticker    string              `json:"ticker"`
+	Threshold float64             `json:"threshold"`
+	Direction PriceAlertDirection `json:"direction"`
+	Email     string              `json:"email"`
+	Active    bool                `json:"active"`
+	CreatedAt time.Time           `json:"createdAt"`
 }
 
 // PriceAlertRepository defines persistence operations for price alerts.

@@ -8,14 +8,21 @@ import (
 	"banka-backend/services/bank-service/internal/domain"
 )
 
-// PriceAlertService handles business logic for price alert management.
-type PriceAlertService struct {
-	repo    domain.PriceAlertRepository
-	listing domain.ListingService
+// PriceCheckPublisher is called after a new alert is created to trigger an immediate price check.
+// PriceAlertWorker satisfies this interface.
+type PriceCheckPublisher interface {
+	Publish(listingID int64, ask, bid float64)
 }
 
-func NewPriceAlertService(repo domain.PriceAlertRepository, listing domain.ListingService) *PriceAlertService {
-	return &PriceAlertService{repo: repo, listing: listing}
+// PriceAlertService handles business logic for price alert management.
+type PriceAlertService struct {
+	repo      domain.PriceAlertRepository
+	listing   domain.ListingService
+	publisher PriceCheckPublisher // optional; nil = no immediate check on creation
+}
+
+func NewPriceAlertService(repo domain.PriceAlertRepository, listing domain.ListingService, publisher PriceCheckPublisher) *PriceAlertService {
+	return &PriceAlertService{repo: repo, listing: listing, publisher: publisher}
 }
 
 type CreatePriceAlertRequest struct {
@@ -43,7 +50,7 @@ func (s *PriceAlertService) CreateAlert(ctx context.Context, req CreatePriceAler
 		return domain.PriceAlert{}, fmt.Errorf("hartija nije pronađena: %w", err)
 	}
 
-	return s.repo.Create(domain.PriceAlert{
+	alert, err := s.repo.Create(domain.PriceAlert{
 		UserID:    req.UserID,
 		ListingID: req.ListingID,
 		Ticker:    listing.Ticker,
@@ -51,6 +58,26 @@ func (s *PriceAlertService) CreateAlert(ctx context.Context, req CreatePriceAler
 		Direction: req.Direction,
 		Email:     req.Email,
 	})
+	if err != nil {
+		return domain.PriceAlert{}, err
+	}
+
+	// Immediately check if the current price already satisfies the condition.
+	// Falls back to Price if Ask/Bid are not populated (seeded without spread).
+	if s.publisher != nil {
+		ask, bid := listing.Ask, listing.Bid
+		if ask <= 0 {
+			ask = listing.Price
+		}
+		if bid <= 0 {
+			bid = listing.Price
+		}
+		if ask > 0 && bid > 0 {
+			s.publisher.Publish(listing.ID, ask, bid)
+		}
+	}
+
+	return alert, nil
 }
 
 func (s *PriceAlertService) ListAlerts(userID int64) ([]domain.PriceAlert, error) {

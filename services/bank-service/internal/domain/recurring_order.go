@@ -6,12 +6,12 @@ type RecurringOrder struct {
 	ID        int64
 	UserID    int64
 	ListingID int64
-	Direction string  // BUY | SELL
-	Mode      string  // BYQUANTITY | BYAMOUNT
+	Direction string // BUY | SELL
+	Mode      string // BYQUANTITY | BYAMOUNT
 	Value     float64
 	AccountID int64
 	IsClient  bool
-	Cadence   string  // DAILY | WEEKLY | MONTHLY
+	Cadence   string // DAILY | WEEKLY | MONTHLY
 	NextRun   time.Time
 	Active    bool
 	CreatedAt time.Time

@@ -17,6 +17,7 @@ import (
 //	GET    /bank/watchlists              — list user's watchlists
 //	POST   /bank/watchlists              — create watchlist
 //	GET    /bank/watchlists/{id}         — get watchlist with items
+//	PATCH  /bank/watchlists/{id}         — rename watchlist
 //	DELETE /bank/watchlists/{id}         — delete watchlist
 //	POST   /bank/watchlists/{id}/items   — add item
 //	DELETE /bank/watchlists/{id}/items/{listingId} — remove item
@@ -72,6 +73,8 @@ func (h *WatchlistHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			h.getWatchlist(w, watchlistID, userID)
+		case http.MethodPatch:
+			h.renameWatchlist(w, r, watchlistID, userID)
 		case http.MethodDelete:
 			h.deleteWatchlist(w, watchlistID, userID)
 		default:
@@ -151,6 +154,26 @@ func (h *WatchlistHandler) getWatchlist(w http.ResponseWriter, id, userID int64)
 		return
 	}
 	watchlistWriteJSON(w, http.StatusOK, map[string]interface{}{"watchlist": detail})
+}
+
+func (h *WatchlistHandler) renameWatchlist(w http.ResponseWriter, r *http.Request, id, userID int64) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+		watchlistWriteJSON(w, http.StatusBadRequest, map[string]string{"error": "name je obavezan"})
+		return
+	}
+	wl, err := h.repo.Rename(id, userID, body.Name)
+	if err != nil {
+		if errors.Is(err, domain.ErrWatchlistNotFound) {
+			watchlistWriteJSON(w, http.StatusNotFound, map[string]string{"error": "watchlist nije pronađen"})
+			return
+		}
+		watchlistWriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	watchlistWriteJSON(w, http.StatusOK, map[string]interface{}{"watchlist": wl})
 }
 
 func (h *WatchlistHandler) deleteWatchlist(w http.ResponseWriter, id, userID int64) {

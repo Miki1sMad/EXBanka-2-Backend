@@ -34,7 +34,7 @@ func NewExchangeHistoryHandler(db *gorm.DB, jwtSecret string) *ExchangeHistoryHa
 }
 
 type exchangeRateHistoryPoint struct {
-	Date     string  `json:"date"`     // YYYY-MM-DD
+	Date     string  `json:"date"` // YYYY-MM-DD
 	Oznaka   string  `json:"oznaka"`
 	Naziv    string  `json:"naziv,omitempty"`
 	Kupovni  float64 `json:"kupovni"`
