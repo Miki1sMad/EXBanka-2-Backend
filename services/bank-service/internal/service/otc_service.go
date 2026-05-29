@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"banka-backend/services/bank-service/internal/domain"
@@ -105,7 +106,7 @@ func (s *otcService) CreateOffer(ctx context.Context, in domain.CreateOTCOfferIn
 		px := in.PricePerStock
 		pm := in.Premium
 		sd := in.SettlementDate
-		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+		if err := repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
 			OfferID:        created.ID,
 			Action:         "CREATED",
 			ChangedBy:      in.BuyerID,
@@ -113,7 +114,9 @@ func (s *otcService) CreateOffer(ctx context.Context, in domain.CreateOTCOfferIn
 			PricePerStock:  &px,
 			Premium:        &pm,
 			SettlementDate: &sd,
-		})
+		}); err != nil {
+			log.Printf("otc: record history CREATED offer=%d: %v", created.ID, err)
+		}
 		return nil
 	})
 	if txErr != nil {
@@ -196,7 +199,7 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 		newPx := in.PricePerStock
 		newPm := in.Premium
 		newSd := in.SettlementDate
-		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+		if err := repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
 			OfferID:           offer.ID,
 			Action:            "COUNTER",
 			ChangedBy:         in.CallerID,
@@ -208,7 +211,9 @@ func (s *otcService) CounterOffer(ctx context.Context, in domain.CounterOTCOffer
 			OldPricePerStock:  &oldPx,
 			OldPremium:        &oldPm,
 			OldSettlementDate: &oldSd,
-		})
+		}); err != nil {
+			log.Printf("otc: record history COUNTER offer=%d: %v", offer.ID, err)
+		}
 		return nil
 	})
 	if txErr != nil {
@@ -309,12 +314,14 @@ func (s *otcService) AcceptOffer(ctx context.Context, in domain.AcceptOTCOfferIn
 		}
 		contract = out
 		acceptedStr := string(domain.OTCOfferAccepted)
-		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+		if err := repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
 			OfferID:   offer.ID,
 			Action:    "ACCEPTED",
 			ChangedBy: in.CallerID,
 			NewStatus: &acceptedStr,
-		})
+		}); err != nil {
+			log.Printf("otc: record history ACCEPTED offer=%d: %v", offer.ID, err)
+		}
 
 		// 3) Transfer premije kroz PaymentService (audit + FX) — UNUTAR iste tx.
 		if err := s.paymentSvc.ExecuteOTCPremiumTransfer(ctx, tx, domain.OTCPremiumTransferInput{
@@ -367,12 +374,14 @@ func (s *otcService) DeclineOffer(ctx context.Context, offerID, callerID int64) 
 			return err
 		}
 		newStatusStr := string(newStatus)
-		_ = repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
+		if err := repo.RecordOfferHistory(ctx, domain.OTCOfferHistoryEntry{
 			OfferID:   offer.ID,
 			Action:    "DECLINED",
 			ChangedBy: callerID,
 			NewStatus: &newStatusStr,
-		})
+		}); err != nil {
+			log.Printf("otc: record history DECLINED offer=%d: %v", offer.ID, err)
+		}
 		offer.Status = newStatus
 		offer.ModifiedBy = callerID
 		updated = offer

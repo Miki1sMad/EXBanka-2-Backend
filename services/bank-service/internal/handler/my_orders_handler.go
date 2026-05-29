@@ -93,6 +93,7 @@ func (h *MyOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CreatedAt         time.Time `gorm:"column:created_at"`
 		Ticker            string    `gorm:"column:ticker"`
 		ListingType       string    `gorm:"column:listing_type"`
+		Name              string    `gorm:"column:name"`
 	}
 
 	query := `
@@ -100,10 +101,10 @@ func (h *MyOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		       o.quantity, o.contract_size, o.price_per_unit, o.stop_price, o.status,
 		       o.approved_by, o.is_done, o.remaining_portions, o.after_hours, o.all_or_none,
 		       o.margin, o.last_modified, o.created_at,
-		       l.ticker, l.listing_type
+		       l.ticker, l.listing_type, l.name
 		FROM core_banking.orders o
 		JOIN core_banking.listing l ON l.id = o.listing_id
-		WHERE o.user_id = ? AND o.fund_id IS NULL`
+		WHERE o.user_id = ?`
 
 	args := []interface{}{callerID}
 	if statusFilter != "" {
@@ -142,6 +143,7 @@ func (h *MyOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		AccountID         int64     `json:"accountId"`
 		ListingID         int64     `json:"listingId"`
 		Ticker            string    `json:"ticker"`
+		Name              string    `json:"name"`
 		ListingType       string    `json:"listingType"`
 		OrderType         string    `json:"orderType"`
 		Direction         string    `json:"direction"`
@@ -171,6 +173,7 @@ func (h *MyOrdersHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			AccountID:         row.AccountID,
 			ListingID:         row.ListingID,
 			Ticker:            row.Ticker,
+			Name:              row.Name,
 			ListingType:       row.ListingType,
 			OrderType:         row.OrderType,
 			Direction:         row.Direction,

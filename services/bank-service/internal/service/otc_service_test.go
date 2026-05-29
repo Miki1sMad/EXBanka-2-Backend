@@ -115,6 +115,23 @@ func (m *mockOTCRepo) ExpireOverdueContracts(ctx context.Context) (int, error) {
 	args := m.Called(ctx)
 	return args.Int(0), args.Error(1)
 }
+func (m *mockOTCRepo) ListContractsExpiringSoon(ctx context.Context, withinDays int) ([]domain.OTCContractExpiringSoon, error) {
+	args := m.Called(ctx, withinDays)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.OTCContractExpiringSoon), args.Error(1)
+}
+func (m *mockOTCRepo) RecordOfferHistory(ctx context.Context, entry domain.OTCOfferHistoryEntry) error {
+	return m.Called(ctx, entry).Error(0)
+}
+func (m *mockOTCRepo) ListCompletedNegotiations(ctx context.Context, filter domain.ListCompletedOffersFilter) ([]domain.NegotiationHistoryItem, error) {
+	args := m.Called(ctx, filter)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.NegotiationHistoryItem), args.Error(1)
+}
 
 // ─── Mock OTCPaymentPort ──────────────────────────────────────────────────────
 

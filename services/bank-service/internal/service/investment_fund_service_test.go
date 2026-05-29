@@ -76,6 +76,30 @@ func (m *mockInvestmentFundRepo) AddSecurityQuantity(ctx context.Context, fundID
 func (m *mockInvestmentFundRepo) DeductLiquidAssets(ctx context.Context, fundID int64, amountRSD float64) error {
 	return m.Called(ctx, fundID, amountRSD).Error(0)
 }
+func (m *mockInvestmentFundRepo) AddLiquidAssets(ctx context.Context, fundID int64, amountRSD float64) error {
+	return m.Called(ctx, fundID, amountRSD).Error(0)
+}
+func (m *mockInvestmentFundRepo) GetAveragePerformance(ctx context.Context, period string) ([]domain.FundPerformancePoint, error) {
+	args := m.Called(ctx, period)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.FundPerformancePoint), args.Error(1)
+}
+func (m *mockInvestmentFundRepo) GetSnapshots(ctx context.Context, fundID int64) ([]domain.FundSnapshot, error) {
+	args := m.Called(ctx, fundID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.FundSnapshot), args.Error(1)
+}
+func (m *mockInvestmentFundRepo) ListFundsByListingID(ctx context.Context, listingID int64) ([]domain.FundHolding, error) {
+	args := m.Called(ctx, listingID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]domain.FundHolding), args.Error(1)
+}
 func (m *mockInvestmentFundRepo) GetPositions(ctx context.Context, fundID int64) ([]domain.ClientFundPosition, error) {
 	args := m.Called(ctx, fundID)
 	if args.Get(0) == nil {

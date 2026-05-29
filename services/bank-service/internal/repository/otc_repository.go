@@ -690,11 +690,29 @@ func (r *otcRepository) RecordOfferHistory(ctx context.Context, entry domain.OTC
 
 func (r *otcRepository) ListCompletedNegotiations(ctx context.Context, filter domain.ListCompletedOffersFilter) ([]domain.NegotiationHistoryItem, error) {
 	// Query 1: completed offers for user (with ticker via JOIN)
+	// NOTE: explicit fields instead of embedding otcOfferModel — GORM does not
+	// flatten embedded structs that implement TableName() during Scan, leaving
+	// all embedded fields at zero value.
 	type offerRow struct {
-		otcOfferModel
-		Ticker    string `gorm:"column:ticker"`
-		StockName string `gorm:"column:stock_name"`
-		Exchange  string `gorm:"column:exchange_name"`
+		ID              int64     `gorm:"column:id"`
+		ListingID       int64     `gorm:"column:listing_id"`
+		SellerID        int64     `gorm:"column:seller_id"`
+		BuyerID         int64     `gorm:"column:buyer_id"`
+		BuyerAccountID  int64     `gorm:"column:buyer_account_id"`
+		SellerAccountID *int64    `gorm:"column:seller_account_id"`
+		Amount          int32     `gorm:"column:amount"`
+		PricePerStock   float64   `gorm:"column:price_per_stock"`
+		Premium         float64   `gorm:"column:premium"`
+		SettlementDate  time.Time `gorm:"column:settlement_date"`
+		Status          string    `gorm:"column:status"`
+		LastModified    time.Time `gorm:"column:last_modified"`
+		ModifiedBy      int64     `gorm:"column:modified_by"`
+		CreatedAt       time.Time `gorm:"column:created_at"`
+		SellerBankID    *int64    `gorm:"column:seller_bank_id"`
+		BuyerBankID     *int64    `gorm:"column:buyer_bank_id"`
+		Ticker          string    `gorm:"column:ticker"`
+		StockName       string    `gorm:"column:stock_name"`
+		Exchange        string    `gorm:"column:exchange_name"`
 	}
 	q := r.db.WithContext(ctx).Table("core_banking.otc_offers o").
 		Select("o.*, l.ticker, l.name as stock_name, e.acronym as exchange_name").
@@ -765,19 +783,37 @@ func (r *otcRepository) ListCompletedNegotiations(ctx context.Context, filter do
 	// Assemble results
 	out := make([]domain.NegotiationHistoryItem, 0, len(rows))
 	for _, row := range rows {
-		item := domain.NegotiationHistoryItem{
+		offer := domain.OTCOffer{
+			ID:              row.ID,
+			ListingID:       row.ListingID,
+			SellerID:        row.SellerID,
+			BuyerID:         row.BuyerID,
+			BuyerAccountID:  row.BuyerAccountID,
+			SellerAccountID: row.SellerAccountID,
+			Amount:          row.Amount,
+			PricePerStock:   row.PricePerStock,
+			Premium:         row.Premium,
+			SettlementDate:  row.SettlementDate,
+			Status:          domain.OTCOfferStatus(row.Status),
+			LastModified:    row.LastModified,
+			ModifiedBy:      row.ModifiedBy,
+			CreatedAt:       row.CreatedAt,
+			SellerBankID:    row.SellerBankID,
+			BuyerBankID:     row.BuyerBankID,
+		}
+		hist := histByOffer[row.ID]
+		if hist == nil {
+			hist = []domain.OTCOfferHistoryEntry{}
+		}
+		out = append(out, domain.NegotiationHistoryItem{
 			OTCOfferListItem: domain.OTCOfferListItem{
-				OTCOffer:  row.otcOfferModel.toDomain(),
+				OTCOffer:  offer,
 				Ticker:    row.Ticker,
 				StockName: row.StockName,
 				Exchange:  row.Exchange,
 			},
-			History: histByOffer[row.ID],
-		}
-		if item.History == nil {
-			item.History = []domain.OTCOfferHistoryEntry{}
-		}
-		out = append(out, item)
+			History: hist,
+		})
 	}
 	return out, nil
 }

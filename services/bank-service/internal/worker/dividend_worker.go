@@ -167,6 +167,7 @@ func (w *DividendWorker) distribute(ctx context.Context, now time.Time) {
 				FROM core_banking.orders
 				WHERE listing_id = ?
 				  AND direction = 'SELL'
+				  AND fund_id IS NULL
 				  AND (
 				      (status = 'DONE' AND is_done = TRUE)
 				      OR (status = 'CANCELED' AND (quantity - remaining_portions) > 0)
@@ -364,7 +365,7 @@ func (w *DividendWorker) distributeFundDividend(ctx context.Context, listing div
 		w.db.WithContext(ctx).Raw(`
 			SELECT r.id FROM core_banking.racun r
 			JOIN core_banking.valuta v ON v.id = r.id_valute
-			WHERE r.vlasnik_id = ? AND v.oznaka = 'RSD' AND r.status = 'AKTIVAN'
+			WHERE r.id_vlasnika = ? AND v.oznaka = 'RSD' AND r.status = 'AKTIVAN'
 			LIMIT 1
 		`, pos.UserID).Scan(&rsdAccountID)
 		if rsdAccountID == 0 {
@@ -382,7 +383,7 @@ func (w *DividendWorker) distributeFundDividend(ctx context.Context, listing div
 			log.Printf("[dividend] credit client %d for fund %d: %v", pos.UserID, holding.FundID, err)
 			continue
 		}
-		totalDistributed += clientRSD
+		totalDistributed += netRSD
 
 		// Proportional share quantity (for record keeping)
 		effectiveShares := int64(math.Round(holding.Quantity * share))
@@ -436,7 +437,7 @@ func (w *DividendWorker) findCreditAccount(ctx context.Context, h dividendHolder
 	w.db.WithContext(ctx).Raw(`
 		SELECT r.id FROM core_banking.racun r
 		JOIN core_banking.valuta v ON v.id = r.id_valute
-		WHERE r.vlasnik_id = ? AND v.oznaka = ? AND r.status = 'AKTIVAN'
+		WHERE r.id_vlasnika = ? AND v.oznaka = ? AND r.status = 'AKTIVAN'
 		LIMIT 1
 	`, h.UserID, listing.Currency).Scan(&sameCurrencyID)
 	if sameCurrencyID != 0 {
@@ -448,7 +449,7 @@ func (w *DividendWorker) findCreditAccount(ctx context.Context, h dividendHolder
 	w.db.WithContext(ctx).Raw(`
 		SELECT r.id FROM core_banking.racun r
 		JOIN core_banking.valuta v ON v.id = r.id_valute
-		WHERE r.vlasnik_id = ? AND v.oznaka = 'RSD' AND r.status = 'AKTIVAN'
+		WHERE r.id_vlasnika = ? AND v.oznaka = 'RSD' AND r.status = 'AKTIVAN'
 		LIMIT 1
 	`, h.UserID).Scan(&rsdAccountID)
 	if rsdAccountID != 0 {
@@ -466,14 +467,14 @@ func (w *DividendWorker) toRSD(ctx context.Context, amount float64, currency str
 	}
 	rates, err := w.exchangeSvc.GetRates(ctx)
 	if err != nil {
-		log.Printf("[dividend] GetRates error: %v, using 1.0 fallback", err)
-		return amount
+		log.Printf("[dividend] GetRates error: %v, skipping payout", err)
+		return 0
 	}
 	for _, r := range rates {
 		if r.Oznaka == currency {
 			return amount * r.Srednji
 		}
 	}
-	log.Printf("[dividend] no mid rate for %s, using 1.0 fallback", currency)
-	return amount
+	log.Printf("[dividend] no mid rate for %s, skipping payout", currency)
+	return 0
 }

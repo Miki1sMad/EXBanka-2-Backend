@@ -13,7 +13,7 @@
 
 -- ─── 1. Employee: kknezevic4622rn@raf.rs ─────────────────────────────────────
 
-INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, is_active)
+INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, gender, phone_number, address, is_active)
 VALUES (
     'kknezevic4622rn@raf.rs',
     '$2a$12$75i5IhAP/GBg/3JY14G3F.XQUpYGL6tCBr1EqLoV33XH5eu4n6sMO',
@@ -22,6 +22,9 @@ VALUES (
     'Ksenija',
     'Knezevic',
     946684800000,
+    'F',
+    '+381601234567',
+    'Bulevar Oslobodjenja 12, Beograd',
     TRUE
 )
 ON CONFLICT (email) DO NOTHING;
@@ -44,14 +47,13 @@ WHERE u.email = 'kknezevic4622rn@raf.rs'
       'VIEW_STOCKS',
       'VIEW_ACCOUNTS',
       'MANAGE_ACCOUNTS',
-      'SUPERVISOR',
-      'AGENT'
+      'SUPERVISOR'
   )
 ON CONFLICT DO NOTHING;
 
 -- ─── 2. Client: kseniakenny@gmail.com ────────────────────────────────────────
 
-INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, is_active)
+INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, gender, phone_number, address, is_active)
 VALUES (
     'kseniakenny@gmail.com',
     '$2a$12$75i5IhAP/GBg/3JY14G3F.XQUpYGL6tCBr1EqLoV33XH5eu4n6sMO',
@@ -60,6 +62,9 @@ VALUES (
     'Ksenia',
     'Kenny',
     946684800000,
+    'F',
+    '+381641234567',
+    'Knez Mihailova 5, Beograd',
     TRUE
 )
 ON CONFLICT (email) DO NOTHING;

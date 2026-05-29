@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -8,7 +9,10 @@ import (
 	"time"
 
 	"banka-backend/services/bank-service/internal/domain"
+	"banka-backend/services/bank-service/internal/transport"
 	auth "banka-backend/shared/auth"
+
+	"google.golang.org/grpc/metadata"
 )
 
 // AuditLogHandler serves audit log endpoints.
@@ -16,12 +20,13 @@ import (
 //	GET  /bank/audit-log         — list entries (ADMIN or SUPERVISOR only)
 //	POST /bank/internal/audit    — accept external audit entries (service-to-service)
 type AuditLogHandler struct {
-	repo      domain.AuditLogRepository
-	jwtSecret string
+	repo       domain.AuditLogRepository
+	userClient *transport.UserServiceClient
+	jwtSecret  string
 }
 
-func NewAuditLogHandler(repo domain.AuditLogRepository, jwtSecret string) *AuditLogHandler {
-	return &AuditLogHandler{repo: repo, jwtSecret: jwtSecret}
+func NewAuditLogHandler(repo domain.AuditLogRepository, jwtSecret string, userClient *transport.UserServiceClient) *AuditLogHandler {
+	return &AuditLogHandler{repo: repo, userClient: userClient, jwtSecret: jwtSecret}
 }
 
 func (h *AuditLogHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -95,25 +100,94 @@ func (h *AuditLogHandler) listEntries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ── Resolve user names ────────────────────────────────────────────────────
+	type userInfo struct {
+		Name  string
+		Email string
+	}
+	resolved := make(map[int64]userInfo)
+
+	if h.userClient != nil {
+		// Collect unique IDs
+		idSet := make(map[int64]struct{})
+		for _, e := range entries {
+			if e.ActorID != nil {
+				idSet[*e.ActorID] = struct{}{}
+			}
+			if e.TargetID != nil {
+				idSet[*e.TargetID] = struct{}{}
+			}
+		}
+
+		if len(idSet) > 0 {
+			authHeader := r.Header.Get("Authorization")
+
+			// Batch-fetch all employees/admins in one call
+			empCtx, empCancel := context.WithTimeout(r.Context(), 5*time.Second)
+			if authHeader != "" {
+				empCtx = metadata.NewOutgoingContext(empCtx, metadata.Pairs("authorization", authHeader))
+			}
+			employeeMap, _ := h.userClient.GetAllEmployeesAsMap(empCtx)
+			empCancel()
+
+			for id := range idSet {
+				if info, ok := employeeMap[id]; ok {
+					resolved[id] = userInfo{
+						Name:  info.FirstName + " " + info.LastName,
+						Email: info.Email,
+					}
+					continue
+				}
+				// Not an employee — try client
+				clCtx, clCancel := context.WithTimeout(r.Context(), 3*time.Second)
+				if authHeader != "" {
+					clCtx = metadata.NewOutgoingContext(clCtx, metadata.Pairs("authorization", authHeader))
+				}
+				if info, err := h.userClient.GetClientInfo(clCtx, id); err == nil {
+					resolved[id] = userInfo{
+						Name:  info.FirstName + " " + info.LastName,
+						Email: info.Email,
+					}
+				}
+				clCancel()
+			}
+		}
+	}
+
 	type entryJSON struct {
-		ID        int64                  `json:"id"`
-		Action    string                 `json:"action"`
-		ActorID   *int64                 `json:"actorId,omitempty"`
-		TargetID  *int64                 `json:"targetId,omitempty"`
-		Details   map[string]interface{} `json:"details"`
-		CreatedAt time.Time              `json:"createdAt"`
+		ID          int64                  `json:"id"`
+		Action      string                 `json:"action"`
+		ActorID     *int64                 `json:"actorId,omitempty"`
+		ActorName   string                 `json:"actorName,omitempty"`
+		ActorEmail  string                 `json:"actorEmail,omitempty"`
+		TargetID    *int64                 `json:"targetId,omitempty"`
+		TargetName  string                 `json:"targetName,omitempty"`
+		Details     map[string]interface{} `json:"details"`
+		CreatedAt   time.Time              `json:"createdAt"`
 	}
 
 	out := make([]entryJSON, 0, len(entries))
 	for _, e := range entries {
-		out = append(out, entryJSON{
+		item := entryJSON{
 			ID:        e.ID,
 			Action:    string(e.Action),
 			ActorID:   e.ActorID,
 			TargetID:  e.TargetID,
 			Details:   e.Details,
 			CreatedAt: e.CreatedAt,
-		})
+		}
+		if e.ActorID != nil {
+			if info, ok := resolved[*e.ActorID]; ok {
+				item.ActorName = info.Name
+				item.ActorEmail = info.Email
+			}
+		}
+		if e.TargetID != nil {
+			if info, ok := resolved[*e.TargetID]; ok {
+				item.TargetName = info.Name
+			}
+		}
+		out = append(out, item)
 	}
 
 	auditWriteJSON(w, http.StatusOK, map[string]interface{}{

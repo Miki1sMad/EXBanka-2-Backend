@@ -127,8 +127,8 @@ ON CONFLICT (permission_code) DO NOTHING;
 -- password: Admin123 (bcrypt cost 12)
 -- =============================================================================
 
-INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, is_active)
-VALUES ('admin@raf.rs', '$2a$12$AcicRLhfUC1gQ2CWY.7t0.enY/PeLQU3.whwoBNr3CwSCncnbO5Qq', '', 'ADMIN', 'Admin', 'Admin', 0, TRUE)
+INSERT INTO users (email, password_hash, salt_password, user_type, first_name, last_name, birth_date, gender, phone_number, address, is_active)
+VALUES ('admin@raf.rs', '$2a$12$AcicRLhfUC1gQ2CWY.7t0.enY/PeLQU3.whwoBNr3CwSCncnbO5Qq', '', 'ADMIN', 'Admin', 'Admin', 0, 'M', '+381611234567', 'Bulevar Kralja Aleksandra 73, Beograd', TRUE)
 ON CONFLICT (email) DO NOTHING;
 
 INSERT INTO employee_details (user_id, username, position, department)
