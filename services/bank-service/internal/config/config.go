@@ -23,6 +23,7 @@ type Config struct {
 	DBUser     string
 	DBPassword string
 	DBName     string
+	DBSchema   string // optional; sets search_path when non-empty
 
 	// JWT
 	JWTAccessSecret string
@@ -135,6 +136,7 @@ func Load() (*Config, error) {
 		DBUser:     os.Getenv("DB_USER"),
 		DBPassword: os.Getenv("DB_PASSWORD"),
 		DBName:     os.Getenv("DB_NAME"),
+		DBSchema:   os.Getenv("DB_SCHEMA"),
 
 		JWTAccessSecret: getEnv("JWT_ACCESS_SECRET", "change-me-access-secret"),
 
@@ -190,11 +192,17 @@ func loadListingRequireLiveQuotes() bool {
 }
 
 // DSN returns the PostgreSQL connection string accepted by GORM's postgres driver.
+// When DBSchema is set, search_path is appended so unqualified table refs resolve
+// to that schema (required when sharing a DB across services).
 func (c *Config) DSN() string {
-	return fmt.Sprintf(
+	base := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable TimeZone=UTC",
 		c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName,
 	)
+	if c.DBSchema != "" {
+		base += " search_path=" + c.DBSchema
+	}
+	return base
 }
 
 func getEnv(key, fallback string) string {

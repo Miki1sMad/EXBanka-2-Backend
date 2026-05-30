@@ -546,6 +546,10 @@ func main() {
 	// koji bi nadkomplikovao scrape); sav ostali saobraćaj se instrumentira.
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/metrics", metrics.Handler())
+	rootMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	rootMux.Handle("/", metrics.HTTPMiddleware(httpMux))
 
 	gatewaySrv := &http.Server{
