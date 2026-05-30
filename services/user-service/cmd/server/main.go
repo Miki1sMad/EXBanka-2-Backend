@@ -142,6 +142,10 @@ func main() {
 	// sve ostalo prolazi kroz HTTP metrics middleware → permHandler → gateway mux.
 	rootMux := http.NewServeMux()
 	rootMux.Handle("/metrics", metrics.Handler())
+	rootMux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	rootMux.Handle("/", metrics.HTTPMiddleware(permHandler.WrapMux(mux)))
 
 	gatewaySrv := &http.Server{
